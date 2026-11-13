@@ -81,7 +81,7 @@ func (r *regionControlResource) Schema(_ context.Context, _ resource.SchemaReque
 			"A declaration that would change nothing is rejected rather than adopted: declaring " +
 			"`enabled` where nothing disables the region, or `disabled` where it already is, " +
 			"records a control this configuration never caused, and destroying it later would " +
-			"mutate state this configuration never owned. Import an existing control instead.\n\n" +
+			"mutate state this configuration never owned.\n\n" +
 			"Destroying the resource restores the state the account had before it: a disable is " +
 			"lifted, an override is withdrawn.\n\n" +
 			"Disabling a region stops the firewall deploying into it, so an account with controls " +
@@ -140,8 +140,7 @@ func (r *regionControlResource) Schema(_ context.Context, _ resource.SchemaReque
 			},
 			"previous_state": schema.StringAttribute{
 				MarkdownDescription: "The state the account had before this resource changed it, " +
-					"which is what destroying the resource restores. Unknown for imported " +
-					"controls, whose destroy then lifts a disable but never stages one.",
+					"which is what destroying the resource restores.",
 				Computed: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),

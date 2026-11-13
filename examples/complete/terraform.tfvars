@@ -18,10 +18,13 @@ reset_confirm = ""
 # Accounts are addressed by their cloud-native id, wherever they sit in the
 # hierarchy. 123456789012 is directly under the root here and 210987654321 is
 # several OUs deep; both resolve the same way.
+#
+# Each service listed is managed on its own. A service already disabled in the
+# account, from the console or elsewhere, is rejected rather than taken over,
+# and services not listed here are left alone, never re-enabled.
 disabled_services = {
-  cloud9_123456789012     = { resource_id = "123456789012", control_key = "cloud9" }
-  gamelift_123456789012   = { resource_id = "123456789012", control_key = "gameliftstreams" }
-  healthlake_210987654321 = { resource_id = "210987654321", control_key = "healthlake" }
+  "123456789012" = ["cloud9", "gameliftstreams"]
+  "210987654321" = ["healthlake"]
 }
 
 # Exemptions from whole classes of control, rather than from one service.

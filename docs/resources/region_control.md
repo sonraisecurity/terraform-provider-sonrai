@@ -7,7 +7,7 @@ description: |-
   Regions are enabled by default, and which regions exist comes from the cloud: the platform tracks what the account has switched on, so a region the account does not have cannot be controlled.
   Accounts only, like the service controls: staging a region control at an OU or root expands to the accounts present at the time and does not cover accounts added later, while the container's aggregate status hides the gap. Declaring per account -- typically with for_each over the account list -- is what makes a new account show up as a planned change instead of silently uncovered.
   state is declared rather than implied, because enabling is an override and not merely the absence of a disable: one account can opt back in to a region disabled above it.
-  A declaration that would change nothing is rejected rather than adopted: declaring enabled where nothing disables the region, or disabled where it already is, records a control this configuration never caused, and destroying it later would mutate state this configuration never owned. Import an existing control instead.
+  A declaration that would change nothing is rejected rather than adopted: declaring enabled where nothing disables the region, or disabled where it already is, records a control this configuration never caused, and destroying it later would mutate state this configuration never owned.
   Destroying the resource restores the state the account had before it: a disable is lifted, an override is withdrawn.
   Disabling a region stops the firewall deploying into it, so an account with controls gets no EventBridge rule there.
   AWS only for now.
@@ -24,7 +24,7 @@ Accounts only, like the service controls: staging a region control at an OU or r
 
 `state` is declared rather than implied, because enabling is an override and not merely the absence of a disable: one account can opt back in to a region disabled above it.
 
-A declaration that would change nothing is rejected rather than adopted: declaring `enabled` where nothing disables the region, or `disabled` where it already is, records a control this configuration never caused, and destroying it later would mutate state this configuration never owned. Import an existing control instead.
+A declaration that would change nothing is rejected rather than adopted: declaring `enabled` where nothing disables the region, or `disabled` where it already is, records a control this configuration never caused, and destroying it later would mutate state this configuration never owned.
 
 Destroying the resource restores the state the account had before it: a disable is lifted, an override is withdrawn.
 
@@ -76,18 +76,7 @@ resource "sonrai_region_control" "no_apac" {
 - `critical` (Boolean) Whether the platform treats this region as critical. A critical region cannot be disabled.
 - `id` (String) Identifier of the form `region_id@root_scope@resource_id`.
 - `pending` (Boolean) True while this region has a staged change that has not been submitted and deployed.
-- `previous_state` (String) The state the account had before this resource changed it, which is what destroying the resource restores. Unknown for imported controls, whose destroy then lifts a disable but never stages one.
+- `previous_state` (String) The state the account had before this resource changed it, which is what destroying the resource restores.
 - `region_name` (String) Human-readable name of the region.
 - `scope` (String) Canonical scope path the account resolved to, recomputed on every read.
 - `status` (String) Status reported by the platform: `ENABLED` or `DISABLED`.
-
-## Import
-
-Import is supported using the following syntax:
-
-The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
-
-```shell
-# Import by region_id@root_scope@resource_id.
-terraform import sonrai_region_control.no_apac_sandbox 'ap-south-1@aws/r-abcd@123456789012'
-```

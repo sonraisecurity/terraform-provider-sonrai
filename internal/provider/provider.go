@@ -44,15 +44,15 @@ func (p *sonraiProvider) Schema(_ context.Context, _ provider.SchemaRequest, res
 		MarkdownDescription: "Manages Sonrai Security platform configuration through the Sonrai GraphQL API.",
 		Attributes: map[string]schema.Attribute{
 			"org": schema.StringAttribute{
-				MarkdownDescription: "Sonrai organization name, the first label of your console hostname. May also be set with `SONRAI_ORG`.",
+				MarkdownDescription: "Sonrai organization name, the first label of your console hostname. May also be set with `SONRAI_ORG`; a value set here takes precedence over it.",
 				Optional:            true,
 			},
 			"domain": schema.StringAttribute{
-				MarkdownDescription: "Sonrai console domain. May also be set with `SONRAI_DOMAIN`. Defaults to `sonraisecurity.com`.",
+				MarkdownDescription: "Sonrai console domain. May also be set with `SONRAI_DOMAIN`; a value set here takes precedence over it. Defaults to `sonraisecurity.com`.",
 				Optional:            true,
 			},
 			"token": schema.StringAttribute{
-				MarkdownDescription: "Bearer token for the Sonrai API, issued to an App identity. May also be set with `SONRAI_TOKEN`, which is the preferred way to supply it: a token written into configuration is also written into state.",
+				MarkdownDescription: "Bearer token for the Sonrai API, issued to an App identity. May also be set with `SONRAI_TOKEN`, which is the preferred way to supply it: a token written into configuration is also written into state, and takes precedence over the environment variable.",
 				Optional:            true,
 				Sensitive:           true,
 			},
@@ -122,7 +122,6 @@ func (p *sonraiProvider) Resources(_ context.Context) []func() resource.Resource
 		NewExemptedIdentityResource,
 		NewJitConfigurationResource,
 		NewRegionControlResource,
-		NewDisabledServicesAuthoritativeResource,
 		NewControlSubmissionResource,
 		NewControlResetResource,
 	}

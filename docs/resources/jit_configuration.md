@@ -6,7 +6,7 @@ description: |-
   Configures Just-in-Time access at a scope: which entitlements are enrolled, whether everything else is denied, and whether Permissions on Demand is automatic.
   The platform replaces the whole configuration at a scope in one call, so this resource is authoritative for the scope it names. An entitlement enrolled from the console and left out of enrolled_entitlements is unenrolled on the next apply.
   Enrolments inherited from an ancestor scope are reported by the platform but are not managed here. Declare them on the ancestor's own resource.
-  Writing this resource without importing first replaces whatever the scope already has: enrolments absent from enrolled_entitlements are unenrolled, and deny_first and auto_pod take the values declared here. Import the scope before declaring it.
+  Declaring this resource replaces whatever the scope already has: enrolments absent from enrolled_entitlements are unenrolled, and deny_first and auto_pod take the values declared here.
   AWS only for now.
   Creating this resource stages the change. It takes effect only once the pending changes for the containing root scope are submitted and deployed.
 ---
@@ -19,7 +19,7 @@ The platform replaces the whole configuration at a scope in one call, so this re
 
 Enrolments inherited from an ancestor scope are reported by the platform but are not managed here. Declare them on the ancestor's own resource.
 
-Writing this resource without importing first replaces whatever the scope already has: enrolments absent from `enrolled_entitlements` are unenrolled, and `deny_first` and `auto_pod` take the values declared here. Import the scope before declaring it.
+Declaring this resource replaces whatever the scope already has: enrolments absent from `enrolled_entitlements` are unenrolled, and `deny_first` and `auto_pod` take the values declared here.
 
 AWS only for now.
 
@@ -89,14 +89,3 @@ Optional:
 
 - `full_access` (Boolean) Whether a session through this entitlement is exempt from every Protected control. Without it, a session still needs Permissions on Demand approval for protected actions. Defaults to false.
 - `type` (String) `AWS_PERMISSION_SET` (an Identity Center permission set), `AWS_ACCOUNT_ACCESS_ROLE` or `AWS_SAML_ROLE`. Defaults to `AWS_PERMISSION_SET`.
-
-## Import
-
-Import is supported using the following syntax:
-
-The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
-
-```shell
-# Import by scope.
-terraform import sonrai_jit_configuration.org 'aws/r-abcd'
-```

@@ -26,9 +26,8 @@ terraform {
   }
 }
 
-provider "sonrai" {
-  org = "crc12345678"
-}
+# Configured from SONRAI_ORG and SONRAI_TOKEN.
+provider "sonrai" {}
 ```
 
 | Argument | Environment variable | Default | |
@@ -39,6 +38,14 @@ provider "sonrai" {
 
 Set the token through `SONRAI_TOKEN`. A token set in configuration is also
 written to state.
+
+An argument set in the `provider` block takes precedence over its environment
+variable. Set each value in one place: an `org` copied from an example
+silently overrides `SONRAI_ORG`.
+
+Blocks in this guide go in any `.tf` file in the directory you run Terraform
+from; Terraform reads them all together. Declare `required_providers` once per
+directory.
 
 ## Walkthrough
 
@@ -67,6 +74,11 @@ Control keys are the firewall's name for a service — `cloud9`, `iam`,
 `sagemaker`. They are listed beside each service in the console.
 
 ### Set up the configuration
+
+This walkthrough builds one configuration a block at a time. It is not the same
+as [`examples/complete`](examples/complete), which declares the same resources
+with `count` and `for_each` so it can be driven from `terraform.tfvars`; follow
+one or the other, not a mix, or resource addresses will not line up.
 
 ```hcl
 terraform {
@@ -233,9 +245,9 @@ terraform apply
 List the controls in `triggers` so that changing any of them produces a new
 submission.
 
-Where firewall changes have been deployed before, the stack already exists and
-the controls are already applied. See
-[Adopting an existing deployment](#adopting-an-existing-deployment).
+This walkthrough assumes the firewall has not been deployed under the root
+scope before. A control that is already applied — from the console or another
+configuration — is rejected rather than taken over.
 
 ### Confirm
 
@@ -400,8 +412,8 @@ To discard the staged controls instead, clear Pending Changes in the console,
 then drop the control resources from state:
 
 ```sh
-terraform state rm 'sonrai_account_disabled_service.this["cloud9_prod"]'
-terraform state rm 'sonrai_account_protected_service.this["iam_prod"]'
+terraform state rm 'sonrai_account_disabled_service.this["cloud9@123456789012"]'
+terraform state rm 'sonrai_account_protected_service.this["iam_123456789012"]'
 ```
 
 Addresses there match [`examples/complete`](examples/complete), where the
@@ -418,83 +430,35 @@ Leaving `reset = false` in `terraform.tfvars` is safe. Arming it again takes
 both variables and a `main.tf` edit, and the plan names the stack it will
 destroy before you approve any of it.
 
-## Adopting an existing deployment
+## Troubleshooting
 
-Where the firewall is already deployed, Terraform has to be told about both
-halves: the CloudFormation stack, and every control.
+**`Instance cannot be destroyed` on `aws_cloudformation_stack.firewall`.**
+The plan wants to delete the stack, and `prevent_destroy` stopped it; nothing
+has changed. In `examples/complete` this almost always means `submit` is
+`false` — often because `terraform.tfvars` is missing or was not loaded — which
+sets the stack's `count` to 0. Set `submit = true` in `terraform.tfvars`.
 
-`terraform import` writes state for a resource the configuration already
-declares — it does not write the declaration. Each resource below needs a block
-in your configuration first, or the import fails with *"resource address does
-not exist in the configuration"*.
+Do **not** follow the error's own suggestion to remove `prevent_destroy` or use
+`-target`. Either lets the apply delete the stack: the firewall's IAM footprint
+for the whole root scope goes, and nothing is unapplied. To take the firewall
+down on purpose, use [Reset everything at once](#reset-everything-at-once).
 
-Where you do not know the values to declare, let Terraform write the block for
-you from the live resource:
+**`no such host` for an organization that is not yours.** An `org` argument in
+the `provider` block takes precedence over `SONRAI_ORG`. Remove it — a copied
+example's `crc12345678` is the usual culprit.
 
-```hcl
-import {
-  to = sonrai_account_disabled_services_authoritative.prod
-  id = "aws/r-abcd@123456789012"
-}
-```
+**`Failed to query available provider packages`.** Check that
+`required_providers` has `source = "sonraisecurity/sonrai"` and that the machine
+can reach `registry.terraform.io`. With OpenTofu, the provider is not yet listed
+in the OpenTofu Registry; install it as described in
+[Installing for OpenTofu](README.md#installing-for-opentofu).
 
-```sh
-terraform plan -generate-config-out=generated.tf
-```
-
-That reads the resource and generates its configuration, arguments filled in,
-without applying anything. Review the result, move it into your configuration,
-then apply to record the import. Config generation only works where the
-resource is not already declared.
-
-**1. Import the stack.**
-
-```sh
-terraform import aws_cloudformation_stack.firewall SonraiCloudPermissionFirewall
-```
-
-This covers the stack alone. The controls stay applied and unknown to
-Terraform.
-
-**2. Import the controls.** Disabled services, protects, region controls and
-exempted identities reject a declaration that matches what is already there, so
-import each one:
-
-```sh
-terraform import sonrai_account_disabled_service.cloud9_prod 'cloud9@aws/r-abcd@123456789012'
-terraform import sonrai_account_protected_service.iam_prod 'iam@aws/r-abcd@123456789012'
-```
-
-To take over every disabled service in an account at once, use
-`sonrai_account_disabled_services_authoritative`, which adopts what it finds:
-
-```sh
-terraform import sonrai_account_disabled_services_authoritative.prod 'aws/r-abcd@123456789012'
-```
-
-There is no equivalent for protects or region controls.
-
-`sonrai_jit_configuration` is authoritative for its whole scope and does not
-reject: declaring it replaces the enrolment, `deny_first` and `auto_pod` the
-scope already has. Import the scope before declaring it.
-
-**3. Check the plan is empty, and check Pending Changes**, before applying
-anything:
-
-```bash
-terraform plan
-```
-
-An empty plan is only half the check. A submission covers every change staged
-under the root scope, not only the ones Terraform made, and changes staged
-elsewhere — from the console, by another configuration, by hand during an
-adoption — do not appear in a Terraform plan at all. Read Pending Changes in
-the console and make sure you recognise everything in it.
-
-Note that this is not limited to a deliberate submission. Where
-`sonrai_control_submission` is part of the configuration, any apply that
-creates or replaces it submits, so an apply made to record an import deploys
-whatever else was staged at the time.
+**A checksum mismatch on `sonraisecurity/sonrai`.** The lock file records a
+different build than the one being installed — usually a local build left in
+`~/.terraform.d/plugins/` or a `dev_overrides` entry in `~/.terraformrc`.
+Remove it so Terraform uses the signed Registry release, then run
+`terraform init` again. Do not delete the lock file to make the error go away
+without finding out which build it was expecting.
 
 ## Addressing
 
@@ -523,8 +487,7 @@ between organizational units requires no configuration change.
 
 Disables one cloud service in one account, denying its sensitive permissions.
 Claims only the service it names. A service already disabled — from the
-console, or by another configuration — is rejected rather than adopted;
-import it instead.
+console, or by another configuration — is rejected rather than adopted.
 
 | Attribute | Type | | |
 |---|---|---|---|
@@ -541,15 +504,12 @@ deployed. `status` reads `Disabled` from the moment it is staged.
 Changing a managed control outside Terraform causes the next plan to show the
 resource as deleted; applying re-stages it.
 
-```sh
-terraform import sonrai_account_disabled_service.cloud9_prod 'cloud9@aws/r-abcd@123456789012'
-```
 
 ### `sonrai_account_protected_service`
 
 Protects one cloud service in one account, firewalling its sensitive
 permissions for every identity except those exempted. A service already
-protected is rejected rather than adopted; import it instead.
+protected is rejected rather than adopted.
 
 | Attribute | Type | | |
 |---|---|---|---|
@@ -584,15 +544,12 @@ A grant approved **permanently** is indistinguishable from an exemption made
 here, so it appears in `exempt_identities` and the next apply removes it. Add
 it to the configuration to keep it.
 
-```sh
-terraform import sonrai_account_protected_service.iam_prod 'iam@aws/r-abcd@123456789012'
-```
 
 ### `sonrai_exempted_identity`
 
 Exempts an identity from whole classes of control at a scope and everything
 beneath it. An identity already exempted at the scope is rejected rather than
-adopted; import it instead. AWS only.
+adopted. AWS only.
 
 | Attribute | Type | | |
 |---|---|---|---|
@@ -631,9 +588,6 @@ The platform's own built-in exemptions, such as the AWS reserved and StackSet
 execution roles, cannot be removed. Drop them from state with
 `terraform state rm` rather than destroying them.
 
-```sh
-terraform import sonrai_exempted_identity.break_glass 'arn:aws:iam::*:role/BreakGlass@aws/r-abcd'
-```
 
 ### `sonrai_jit_configuration`
 
@@ -647,8 +601,7 @@ Configures Just-in-Time access at a scope. AWS only.
 | `enrolled_entitlements` | set(object) | optional | `name`, `type`, `full_access`. |
 | `pending` | bool | computed | True while a staged change has not been deployed. |
 
-Writing this resource without importing first replaces whatever the scope
-already has: enrolments absent from `enrolled_entitlements` are unenrolled, and
+Declaring this resource replaces whatever the scope already has: enrolments absent from `enrolled_entitlements` are unenrolled, and
 `deny_first` and `auto_pod` take the values declared here.
 
 Each entitlement takes a `name` — the permission set, account access role or
@@ -683,9 +636,6 @@ There is no delete for a JIT configuration, so removal is a write of the empty
 configuration; where the change was staged and never deployed, that cancels the
 staged row rather than adding a second one.
 
-```sh
-terraform import sonrai_jit_configuration.org 'aws/r-abcd'
-```
 
 ### `sonrai_region_control`
 
@@ -734,58 +684,11 @@ cannot be controlled at all. The platform accepts both requests and silently
 does nothing, so the provider checks first and fails the apply rather than
 reporting a change it did not make. A declaration the platform already
 satisfies is rejected the same way: it would record a control this
-configuration never caused. Import the existing control instead.
+configuration never caused.
 
 Destroying the resource restores the state the account had before it —
-`previous_state`, recorded at create. An imported control has no recorded
-before, so destroying it lifts a disable but never stages one: an enable
-override that was imported stays in force, with a warning saying so.
+`previous_state`, recorded at create.
 
-```sh
-terraform import sonrai_region_control.no_apac_sandbox 'ap-south-1@aws/r-abcd@123456789012'
-```
-
-### `sonrai_account_disabled_services_authoritative`
-
-Declares the complete set of disabled services for one account.
-
-| Attribute | Type | | |
-|---|---|---|---|
-| `root_scope` | string | required | Cloud organization root scope. Forces replacement. |
-| `resource_id` | string | required | Id of the account. Forces replacement. |
-| `control_keys` | set(string) | required | Firewall control keys to disable. |
-| `scope` | string | computed | Resolved scope path. |
-
-Services disabled in the account but absent from `control_keys` are re-enabled
-on the next apply, including changes made from the console, by another
-configuration, or by automation.
-
-Import the account before first use. Declare the block with the services you
-expect to be disabled, import, and confirm the plan is empty:
-
-```hcl
-resource "sonrai_account_disabled_services_authoritative" "prod" {
-  root_scope   = "aws/r-abcd"
-  resource_id  = "123456789012"
-  control_keys = ["cloud9", "healthlake"]
-}
-```
-
-```sh
-terraform import sonrai_account_disabled_services_authoritative.prod 'aws/r-abcd@123456789012'
-terraform plan
-```
-
-Do not declare `control_keys = []` and read the set back afterwards. Between
-the import and editing the configuration, state holds the real set while the
-configuration asks for none — and because this resource is authoritative, an
-apply in that window re-enables every service in the account. Generating the
-configuration, as above, never opens that window.
-
-Writing this resource without importing first plans to re-enable every service
-not listed.
-
-Find available control keys with the `CloudServices` query, or in the console.
 
 ### `sonrai_control_submission`
 
@@ -827,9 +730,6 @@ submission for those still-staged changes.
 Destroying the resource removes it from state without reverting the submitted
 changes.
 
-```sh
-terraform import sonrai_control_submission.firewall 'a1b2c3d4-0000-0000-0000-000000000000'
-```
 
 ### `sonrai_control_reset`
 
@@ -863,8 +763,6 @@ itself.
 Destroying the resource forgets the reset. It does not undo it, and nothing
 needs undoing — the controls it unapplied are staged, and submitting them
 deploys them again.
-
-There is no import. The resource records a reset that this configuration ran.
 
 ## Data sources
 

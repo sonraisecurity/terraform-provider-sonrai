@@ -4,8 +4,8 @@ page_title: "sonrai_account_disabled_service Resource - sonrai"
 subcategory: ""
 description: |-
   Disables a cloud service in one account, denying its sensitive permissions.
-  A service already disabled -- from the console, or by another configuration -- is rejected rather than adopted; import it instead.
-  This resource claims only the service it names. To declare the complete set of disabled services for an account, use sonrai_account_disabled_services_authoritative.
+  A service already disabled -- from the console, or by another configuration -- is rejected rather than adopted.
+  This resource claims only the service it names, and never re-enables a service it does not manage.
   Creating this resource stages the change. It takes effect only once the pending changes for the containing root scope are submitted and deployed.
 ---
 
@@ -13,9 +13,9 @@ description: |-
 
 Disables a cloud service in one account, denying its sensitive permissions.
 
-A service already disabled -- from the console, or by another configuration -- is rejected rather than adopted; import it instead.
+A service already disabled -- from the console, or by another configuration -- is rejected rather than adopted.
 
-This resource claims only the service it names. To declare the complete set of disabled services for an account, use `sonrai_account_disabled_services_authoritative`.
+This resource claims only the service it names, and never re-enables a service it does not manage.
 
 Creating this resource *stages* the change. It takes effect only once the pending changes for the containing root scope are submitted and deployed.
 
@@ -63,14 +63,3 @@ Organizational units, folders, management groups and roots are not accepted. Lis
 - `pending` (Boolean) True while this control has a staged change that has not been submitted and deployed.
 - `scope` (String) Canonical scope path this resolved to, recomputed on every read.
 - `status` (String) Control status reported by the platform: `Disabled`, `Protected`, `Unprotected` or `Non-Privileged`. Reads `Disabled` from the moment a block is staged.
-
-## Import
-
-Import is supported using the following syntax:
-
-The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
-
-```shell
-# Import ID is control_key@root_scope@resource_id.
-terraform import sonrai_account_disabled_service.cloud9_prod 'cloud9@aws/r-abcd@123456789012'
-```

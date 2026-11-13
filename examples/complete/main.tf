@@ -1,7 +1,8 @@
 terraform {
   required_providers {
     sonrai = {
-      source = "sonraisecurity/sonrai"
+      source  = "sonraisecurity/sonrai"
+      version = "~> 0.1"
     }
     aws = {
       source  = "hashicorp/aws"
@@ -21,6 +22,19 @@ locals {
   # down while one is armed. Clearing reset brings both back, which submits
   # afresh and redeploys.
   deployed = var.submit && !var.reset
+
+  # One entry per account and service, keyed "control_key@account_id". Each
+  # becomes its own sonrai_account_disabled_service, so a service already
+  # disabled outside this configuration is rejected rather than silently taken
+  # over or re-enabled.
+  disabled_services = merge([
+    for account_id, control_keys in var.disabled_services : {
+      for control_key in control_keys : "${control_key}@${account_id}" => {
+        resource_id = account_id
+        control_key = control_key
+      }
+    }
+  ]...)
 }
 
 # Which account the template deploys into: the delegated admin account where
@@ -34,7 +48,7 @@ data "sonrai_deploy_account" "firewall" {
 data "aws_caller_identity" "current" {}
 
 resource "sonrai_account_disabled_service" "this" {
-  for_each = var.disabled_services
+  for_each = local.disabled_services
 
   root_scope  = var.root_scope
   resource_id = each.value.resource_id
