@@ -6,7 +6,7 @@ description: |-
   Exempts an identity from whole classes of firewall control at a scope and everything beneath it.
   Set scope to a root scope to exempt across the whole organization, which is what a break-glass role usually wants. Set it to an account to exempt only there.
   This is not the same as the per-control exemptions on sonrai_account_protected_service. Those name identities exempt from one control; this exempts an identity from every control of the listed kinds.
-  An identity already exempted at the scope -- from the console, or by another configuration -- is rejected rather than adopted; import it instead.
+  An identity already exempted at the scope -- from the console, or by another configuration -- is rejected rather than adopted.
   AWS only for now.
   Identities are matched as patterns, so arn:aws:iam::*:role/BreakGlass covers that role in every account. A pattern that names no resource, such as arn:aws:iam::, would match every ARN in the organization and is refused.
   Creating this resource stages the change. It takes effect only once the pending changes for the containing root scope are submitted and deployed.
@@ -20,7 +20,7 @@ Set `scope` to a root scope to exempt across the whole organization, which is wh
 
 This is not the same as the per-control exemptions on `sonrai_account_protected_service`. Those name identities exempt from one control; this exempts an identity from every control of the listed kinds.
 
-An identity already exempted at the scope -- from the console, or by another configuration -- is rejected rather than adopted; import it instead.
+An identity already exempted at the scope -- from the console, or by another configuration -- is rejected rather than adopted.
 
 AWS only for now.
 
@@ -72,15 +72,3 @@ resource "sonrai_exempted_identity" "deploy_robot" {
 
 - `id` (String) Identifier of the form `identity@scope`.
 - `pending` (Boolean) True while this exemption has a staged change that has not been submitted and deployed.
-
-## Import
-
-Import is supported using the following syntax:
-
-The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
-
-```shell
-# Import by identity@scope. Append @sso when the identity is an SSO actor id.
-terraform import sonrai_exempted_identity.break_glass 'arn:aws:iam::*:role/BreakGlass@aws/r-abcd'
-terraform import sonrai_exempted_identity.sso_admin 'someone@example.com@aws/r-abcd@sso'
-```

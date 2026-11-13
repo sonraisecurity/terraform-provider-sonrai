@@ -69,7 +69,7 @@ func (r *exemptedIdentityResource) Schema(_ context.Context, _ resource.SchemaRe
 			"`sonrai_account_protected_service`. Those name identities exempt from one control; this " +
 			"exempts an identity from every control of the listed kinds.\n\n" +
 			"An identity already exempted at the scope -- from the console, or by another " +
-			"configuration -- is rejected rather than adopted; import it instead.\n\n" +
+			"configuration -- is rejected rather than adopted.\n\n" +
 			"AWS only for now.\n\n" +
 			"Identities are matched as **patterns**, so `arn:aws:iam::*:role/BreakGlass` covers that " +
 			"role in every account. A pattern that names no resource, such as `arn:aws:iam::`, would " +

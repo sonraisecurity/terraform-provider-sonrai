@@ -53,9 +53,9 @@ func (r *accountDisabledServiceResource) Schema(_ context.Context, _ resource.Sc
 		MarkdownDescription: "Disables a cloud service in one account, denying its sensitive " +
 			"permissions.\n\n" +
 			"A service already disabled -- from the console, or by another configuration -- is " +
-			"rejected rather than adopted; import it instead.\n\n" +
-			"This resource claims only the service it names. To declare the complete set of disabled " +
-			"services for an account, use `sonrai_account_disabled_services_authoritative`.\n\n" +
+			"rejected rather than adopted.\n\n" +
+			"This resource claims only the service it names, and never re-enables a service it " +
+			"does not manage.\n\n" +
 			"Creating this resource *stages* the change. It takes effect only once the pending changes " +
 			"for the containing root scope are submitted and deployed.",
 		Attributes: map[string]schema.Attribute{

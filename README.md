@@ -23,9 +23,6 @@ an organization's controls lives nowhere you can review or diff.
   `sonrai_control_reset` ordered after the stack so the reset can finish. It is
   gated by a confirmation compared while the plan is built, so a wrong scope
   stops the run before anything is deleted.
-- **Adoption of an existing deployment.** Every control resource supports
-  `terraform import`, and `sonrai_account_disabled_services_authoritative`
-  takes over an account's whole disabled-service set at once.
 - **Reorganization-proof addressing.** Scope paths are resolved on every
   operation, so moving an account between organizational units needs no
   configuration change.
@@ -40,7 +37,6 @@ an organization's controls lives nowhere you can review or diff.
 |---|---|
 | `sonrai_account_disabled_service` | One service disabled in one account |
 | `sonrai_account_protected_service` | One service protected in one account, with its exemptions |
-| `sonrai_account_disabled_services_authoritative` | The complete disabled-service set for an account |
 | `sonrai_exempted_identity` | An identity exempt from whole classes of control at a scope |
 | `sonrai_region_control` | One cloud region enabled or disabled in one account |
 | `sonrai_jit_configuration` | Just-in-Time access at a scope |
@@ -57,8 +53,9 @@ an organization's controls lives nowhere you can review or diff.
 | `sonrai_entitlements` | AWS permission sets, account access roles and SAML roles at a scope |
 | `sonrai_control_transaction` | A submission's progress, optionally waiting for it to finish |
 
-Per-attribute reference for each of these is in [`GUIDE.md`](GUIDE.md) and in
-[`docs/`](docs), which is what the Terraform Registry publishes.
+Per-attribute reference for each of these is in [`GUIDE.md`](GUIDE.md) and on
+the [Terraform Registry](https://registry.terraform.io/providers/sonraisecurity/sonrai/latest/docs),
+generated from [`docs/`](docs).
 
 ## Tech Stack / Dependencies
 
@@ -81,7 +78,10 @@ configuration.
 
 To *use* the provider:
 
-- Terraform 1.5 or later, or OpenTofu 1.6 or later
+- Terraform 1.5 or later, or OpenTofu 1.6 or later. On macOS,
+  `brew install hashicorp/tap/terraform` or `brew install opentofu`; plain
+  `brew install terraform` is frozen at 1.5.7. Elsewhere, see
+  [Install Terraform](https://developer.hashicorp.com/terraform/install).
 - A Sonrai API token issued to an App identity, with write scope
 - AWS credentials for the account the firewall deploys into, if you want the
   same apply to create the CloudFormation stack. `sonrai_deploy_account`
@@ -95,39 +95,75 @@ To *build* it:
 
 ## Installation & Quick Start
 
-### Declare the provider
+The provider is published on the
+[Terraform Registry](https://registry.terraform.io/providers/sonraisecurity/sonrai/latest),
+so `terraform init` downloads it and verifies its signature like any other
+provider. There is nothing to build or install.
 
-```hcl
-terraform {
-  required_providers {
-    sonrai = {
-      source  = "sonraisecurity/sonrai"
-      version = "~> 0.1"
-    }
-  }
-}
+Commit the `.terraform.lock.hcl` that `terraform init` writes. It pins the
+provider version and the checksums of the release you reviewed; move to a newer
+release deliberately with `terraform init -upgrade`.
 
-provider "sonrai" {
-  org = "crc12345678" # the first label of your console hostname
-}
-```
+### Installing for OpenTofu
 
-**The provider is not on the Terraform Registry yet**, so `terraform init`
-cannot fetch it. Until it is published, build it and drop the binary into the
-CLI's local plugin directory, where Terraform finds it without any CLI
-configuration:
+The provider is not yet listed in the OpenTofu Registry, so `tofu init` cannot
+download it. Install the signed release from GitHub into OpenTofu's local
+plugin directory instead. These are the same files the Terraform Registry
+serves.
+
+**1. Download the release for your platform** — `darwin_arm64`, `darwin_amd64`,
+`linux_amd64`, `linux_arm64`, `windows_amd64` and others are on the
+[releases page](https://github.com/sonraisecurity/terraform-provider-sonrai/releases):
 
 ```sh
-make build
+VERSION=0.1.0
+PLATFORM=darwin_arm64
+NAME=terraform-provider-sonrai_${VERSION}
+BASE=https://github.com/sonraisecurity/terraform-provider-sonrai/releases/download/v${VERSION}
 
-PLUGINS=~/.terraform.d/plugins/registry.terraform.io/sonraisecurity/sonrai/0.1.0/darwin_arm64
-mkdir -p "$PLUGINS"
-cp terraform-provider-sonrai "$PLUGINS/terraform-provider-sonrai_v0.1.0"
+mkdir sonrai-download && cd sonrai-download
+curl -fL -O "$BASE/${NAME}_${PLATFORM}.zip" \
+        -O "$BASE/${NAME}_SHA256SUMS" \
+        -O "$BASE/${NAME}_SHA256SUMS.sig"
 ```
 
-Match the directory to your platform — `darwin_arm64`, `linux_amd64` — and the
-version to the one your `required_providers` block asks for. Once the provider
-is published, `terraform init` fetches it like any other provider.
+**2. Verify it.** OpenTofu does not check signatures on a provider installed
+this way — `tofu init` reports it as *unauthenticated* — so this step is the
+only one that proves the file came from Sonrai and was not altered:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sonraisecurity/terraform-provider-sonrai/main/signing-key.asc | gpg --import
+gpg --verify "${NAME}_SHA256SUMS.sig" "${NAME}_SHA256SUMS"
+shasum -a 256 -c --ignore-missing "${NAME}_SHA256SUMS"
+```
+
+Continue only if `gpg` reports `Good signature from "Sonrai Security"`, signed
+using key `CF378842B8816DE99228D77F01875ECCE8BDD26E`, and `shasum` reports `OK`
+for the zip. gpg also warns that the key is not certified with a trusted
+signature; that is expected for a key you have not signed yourself, which is
+why you compare the fingerprint.
+
+**3. Put the zip, unextracted, where OpenTofu looks for local providers:**
+
+```sh
+MIRROR=~/.terraform.d/plugins/registry.opentofu.org/sonraisecurity/sonrai
+mkdir -p "$MIRROR"
+cp "${NAME}_${PLATFORM}.zip" "$MIRROR/"
+```
+
+`tofu init` now installs `sonraisecurity/sonrai` from there and every other
+provider, such as `hashicorp/aws`, from the OpenTofu Registry as usual.
+
+If your team runs OpenTofu on more than one platform, download and verify each
+platform's zip into the same directory, then record all of them in the lock
+file, or `tofu init` fails on the platforms it is missing:
+
+```sh
+tofu providers lock -fs-mirror="$HOME/.terraform.d/plugins" \
+  -platform=darwin_arm64 -platform=linux_amd64
+```
+
+Repeat these steps for each new release.
 
 ### Start from the worked example
 
@@ -138,13 +174,26 @@ whole cycle. Copy it and edit one file:
 git clone https://github.com/sonraisecurity/terraform-provider-sonrai.git
 cp -r terraform-provider-sonrai/examples/complete my-firewall
 cd my-firewall
+# edit terraform.tfvars -- see below
 
 export SONRAI_ORG=crc12345678   # the first label of your console hostname
 export SONRAI_TOKEN='...'       # issued to an App identity, with write scope
+# and AWS credentials for the deploy account, e.g. aws sso login --profile ...
 
 terraform init
 terraform plan
 ```
+
+The example is complete on its own: it declares the providers itself, so there
+is nothing else to add. To use the provider in a configuration of your own, see
+[Provider](#provider) under Configuration.
+
+`terraform plan` is read-only: it changes nothing in Sonrai or AWS. Even so, it
+needs **both** the Sonrai variables and AWS credentials for the deploy account,
+because the example reads the AWS identity to guard the deploy. Its
+`deploy_target` output names that account. If the first plan fails and the
+error does not make clear which side is wrong, see
+[Troubleshooting](#troubleshooting).
 
 `terraform.tfvars` is the only file you need to edit. Put your root scope,
 account ids, control keys and exemptions there; `main.tf` loops over whatever
@@ -184,7 +233,15 @@ provider_installation {
 }
 ```
 
+Remove the `dev_overrides` entry when you are done, so Terraform goes back to
+the signed Registry release. The same goes for a binary copied into
+`~/.terraform.d/plugins/registry.terraform.io/sonraisecurity/` by an earlier
+version of these instructions: while it is there, `terraform init` installs it
+instead of the Registry release.
+
 ## Usage Examples
+
+Each snippet assumes the provider is declared as in [Provider](#provider).
 
 ### Disable a service
 
@@ -326,24 +383,88 @@ only what Terraform manages. `confirm` must repeat `root_scope` exactly and is
 compared while the plan is built, so a mismatch stops the run before anything
 is deleted.
 
-### Adopt an existing deployment
+### Troubleshooting
 
-`terraform import` writes state for a resource the configuration already
-declares, so write the block first:
+**The first `plan` fails and it is unclear whether Sonrai or AWS is the
+problem.** Test the Sonrai side alone. In an empty directory of its own — not
+the worked example's, which already declares these blocks — save this as
+`check.tf`, with your root scope:
 
-```sh
-terraform import aws_cloudformation_stack.firewall SonraiCloudPermissionFirewall
-terraform import sonrai_account_disabled_service.cloud9_prod 'cloud9@aws/r-abcd@123456789012'
-terraform import sonrai_account_protected_service.iam_prod 'iam@aws/r-abcd@123456789012'
+```hcl
+terraform {
+  required_providers {
+    sonrai = {
+      source  = "sonraisecurity/sonrai"
+      version = "~> 0.1"
+    }
+  }
+}
+
+provider "sonrai" {}
+
+data "sonrai_deploy_account" "check" {
+  root_scope = "aws/r-abcd" # your cloud organization root
+}
+
+output "deploy_account" {
+  value = data.sonrai_deploy_account.check.account_id
+}
 ```
 
-Then check the plan is empty **and** that Pending Changes in the console holds
-nothing you do not recognise: a submission carries everything staged under the
-root scope, not only what Terraform staged.
+```sh
+terraform init
+terraform plan
+```
+
+It needs only `SONRAI_ORG` and `SONRAI_TOKEN`, and reads without changing
+anything. If it shows `deploy_account`, the provider, the token and the root
+scope are fine and the problem is on the AWS side. If it fails, its error is
+about Sonrai alone. Delete the directory afterwards.
+
+**`Instance cannot be destroyed` on `aws_cloudformation_stack.firewall`.** The
+plan wants to delete the stack and `prevent_destroy` stopped it. Nothing has
+changed. In `examples/complete` this almost always means `submit` is `false`
+— often because `terraform.tfvars` is missing or was not loaded — which sets
+the stack's `count` to 0. Set `submit = true` again.
+
+Do **not** follow the error's suggestion to remove `prevent_destroy` or use
+`-target`. Either lets the apply delete the stack, which removes the
+firewall's IAM footprint for the whole root scope without unapplying anything.
+To take the firewall down deliberately, see [Reset an organization](#reset-an-organization).
+
+**`no such host` for `crc12345678.sonraisecurity.com`** (or another org than
+yours). An `org` argument in the `provider` block is overriding `SONRAI_ORG`.
+Remove it.
 
 ## Configuration
 
 ### Provider
+
+To use the provider in a configuration of your own, declare it once per
+directory:
+
+```hcl
+terraform {
+  required_providers {
+    sonrai = {
+      source  = "sonraisecurity/sonrai"
+      version = "~> 0.1"
+    }
+  }
+}
+
+# Configured from SONRAI_ORG and SONRAI_TOKEN.
+provider "sonrai" {}
+```
+
+The provider reads `SONRAI_ORG` and `SONRAI_TOKEN` from the environment. An
+argument set in the `provider` block **takes precedence over its environment
+variable**, so a copied `org = "..."` silently overrides `SONRAI_ORG`. Set each
+value in one place only, and the token only in the environment.
+
+Put this block in any `.tf` file in the directory you run Terraform from —
+Terraform reads every `.tf` file there together. `versions.tf` is the usual
+name. Declare `required_providers` once per directory.
 
 | Argument | Environment variable | Default | |
 |---|---|---|---|
@@ -366,7 +487,7 @@ Set these in `terraform.tfvars`:
 | Variable | Type | Default | |
 |---|---|---|---|
 | `root_scope` | string | `aws/r-abcd` | Cloud organization root scope |
-| `disabled_services` | map(object) | `{}` | `resource_id`, `control_key` |
+| `disabled_services` | map(set(string)) | `{}` | Account id => control keys to disable, e.g. `"123456789012" = ["cloud9"]` |
 | `protected_services` | map(object) | `{}` | `resource_id`, `control_key`, `exempt_identities`, `exempt_sso_actor_ids` |
 | `exempted_identities` | map(object) | `{}` | `identity`, `exempt_from`, `sso`, `scope` |
 | `submit` | bool | `false` | Submit the staged changes and deploy the template |
@@ -392,7 +513,8 @@ overrides `submit` to `true`, so a first apply deploys.
 │   ├── resources/           # per-resource examples, rendered into docs/
 │   └── data-sources/        # per-data-source examples
 ├── docs/                    # Terraform Registry docs, generated by `make docs`
-└── GUIDE.md                 # walkthrough and per-attribute reference
+├── GUIDE.md                 # walkthrough and per-attribute reference
+└── signing-key.asc          # public key the release checksums are signed with
 ```
 
 `docs/` is generated — edit the schema descriptions in `internal/provider` and

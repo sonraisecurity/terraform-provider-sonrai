@@ -4,7 +4,7 @@ page_title: "sonrai_account_protected_service Resource - sonrai"
 subcategory: ""
 description: |-
   Protects one cloud service in one account, firewalling its sensitive permissions for every identity except those exempted here.
-  A service already protected -- from the console, or by another configuration -- is rejected rather than adopted; import it instead.
+  A service already protected -- from the console, or by another configuration -- is rejected rather than adopted.
   Exemptions are attributes of the protect rather than resources of their own: each apply converges the platform's exemption set on the configured one, and the platform removes them when the control is unmanaged or switched to a disable.
   The platform's own suggested exemptions are not applied. Read them with the sonrai_suggested_exemptions data source and list the ones you want, so that the same configuration always produces the same result.
   Exemptions granted by a time-limited Permissions on Demand approval are reported in timeboxed_exempt_identities and timeboxed_exempt_sso_actor_ids and are not managed here: they expire on their own, and listing them would have Terraform fight the approval workflow. A PoD approval granted permanently is indistinguishable from one made here, so it is treated as drift and removed on the next apply unless it is added to exempt_identities.
@@ -15,7 +15,7 @@ description: |-
 
 Protects one cloud service in one account, firewalling its sensitive permissions for every identity except those exempted here.
 
-A service already protected -- from the console, or by another configuration -- is rejected rather than adopted; import it instead.
+A service already protected -- from the console, or by another configuration -- is rejected rather than adopted.
 
 Exemptions are attributes of the protect rather than resources of their own: each apply converges the platform's exemption set on the configured one, and the platform removes them when the control is unmanaged or switched to a disable.
 
@@ -83,14 +83,3 @@ output "iam_prod" {
 - `status` (String) Control status reported by the platform: `Protected`, `Disabled`, `Unprotected` or `Non-Privileged`. Reads `Protected` from the moment a protect is staged.
 - `timeboxed_exempt_identities` (Set of String) Identities currently exempt from this control through a time-limited Permissions on Demand grant. Reported for visibility; not managed.
 - `timeboxed_exempt_sso_actor_ids` (Set of String) SSO actor ids currently exempt from this control through a time-limited Permissions on Demand grant. Reported for visibility; not managed.
-
-## Import
-
-Import is supported using the following syntax:
-
-The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
-
-```shell
-# Import ID is control_key@root_scope@resource_id.
-terraform import sonrai_account_protected_service.iam_prod 'iam@aws/r-abcd@123456789012'
-```

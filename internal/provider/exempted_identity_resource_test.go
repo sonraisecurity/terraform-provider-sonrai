@@ -139,18 +139,14 @@ func TestExemptedIdentityRejectsAdoption(t *testing.T) {
 	if !strings.Contains(desc, "rejected rather than adopted") {
 		t.Error("the schema should state that an existing exemption is rejected, not adopted")
 	}
-	if !strings.Contains(desc, "import it instead") {
-		t.Error("the rejection should point at import")
-	}
 }
 
 // TestJitConfigurationWarnsItReplaces: the resource is authoritative for its
-// whole scope, so a first apply against an unimported scope discards whatever
-// enrolment is there. The authoritative disabled-services resource carries the
-// same warning.
+// whole scope, so a first apply discards whatever enrolment the scope already
+// has. The schema has to say so before anyone declares it.
 func TestJitConfigurationWarnsItReplaces(t *testing.T) {
 	desc := jitSchema(t).MarkdownDescription
-	if !strings.Contains(desc, "without importing first") {
-		t.Error("the schema should warn that writing without importing replaces the scope")
+	if !strings.Contains(desc, "replaces whatever the scope already has") {
+		t.Error("the schema should warn that declaring the resource replaces the scope's configuration")
 	}
 }

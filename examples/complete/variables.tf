@@ -5,12 +5,18 @@ variable "root_scope" {
 }
 
 variable "disabled_services" {
-  description = "Services to disable, keyed by a name of your choosing."
-  type = map(object({
-    resource_id = string
-    control_key = string
-  }))
-  default = {}
+  description = "Services to disable: cloud-native account, project or subscription id => control keys to disable in it."
+  type        = map(set(string))
+  default     = {}
+
+  validation {
+    condition = alltrue([
+      for account_id, control_keys in var.disabled_services :
+      length(trimspace(account_id)) > 0 && length(control_keys) > 0 &&
+      alltrue([for k in control_keys : can(regex("^[a-z0-9][a-z0-9_-]*$", k))])
+    ])
+    error_message = "Each disabled_services entry needs a non-empty account id and at least one lowercase control key, such as \"cloud9\"."
+  }
 }
 
 variable "protected_services" {

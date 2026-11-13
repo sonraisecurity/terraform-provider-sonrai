@@ -36,10 +36,6 @@ func (r *accountProtectedServiceResource) resolveScope(ctx context.Context, m *a
 	return resolveModelScope(ctx, r.api, m.RootScope, m.ResourceID, &m.Scope)
 }
 
-func (r *disabledServicesAuthoritativeResource) resolveScope(ctx context.Context, m *disabledServicesAuthoritativeModel) (string, error) {
-	return resolveModelScope(ctx, r.api, m.RootScope, m.ResourceID, &m.Scope)
-}
-
 func resolveModelScope(ctx context.Context, api *client.Client, rootScope, resourceID types.String, scope *types.String) (string, error) {
 	resolved, err := resolveAccountScope(ctx, api, rootScope.ValueString(), resourceID.ValueString())
 	if err != nil {
@@ -347,4 +343,20 @@ func entitlementsToSet(ctx context.Context, entitlements []client.JitEntitlement
 	set, d := types.SetValue(objType, values)
 	diags.Append(d...)
 	return set, diags
+}
+
+// difference returns the members of a that are not in b, sorted.
+func difference(a, b []string) []string {
+	inB := make(map[string]struct{}, len(b))
+	for _, v := range b {
+		inB[v] = struct{}{}
+	}
+	var out []string
+	for _, v := range a {
+		if _, ok := inB[v]; !ok {
+			out = append(out, v)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

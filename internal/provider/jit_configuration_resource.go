@@ -63,9 +63,9 @@ func (r *jitConfigurationResource) Schema(_ context.Context, _ resource.SchemaRe
 			"left out of `enrolled_entitlements` is unenrolled on the next apply.\n\n" +
 			"Enrolments inherited from an ancestor scope are reported by the platform but are not " +
 			"managed here. Declare them on the ancestor's own resource.\n\n" +
-			"Writing this resource without importing first replaces whatever the scope already " +
-			"has: enrolments absent from `enrolled_entitlements` are unenrolled, and `deny_first` " +
-			"and `auto_pod` take the values declared here. Import the scope before declaring it.\n\n" +
+			"Declaring this resource replaces whatever the scope already has: enrolments absent " +
+			"from `enrolled_entitlements` are unenrolled, and `deny_first` and `auto_pod` take the " +
+			"values declared here.\n\n" +
 			"AWS only for now.\n\n" +
 			"Creating this resource *stages* the change. It takes effect only once the pending " +
 			"changes for the containing root scope are submitted and deployed.",

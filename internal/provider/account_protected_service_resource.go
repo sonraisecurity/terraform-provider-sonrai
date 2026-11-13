@@ -59,7 +59,7 @@ func (r *accountProtectedServiceResource) Schema(_ context.Context, _ resource.S
 		MarkdownDescription: "Protects one cloud service in one account, firewalling its sensitive " +
 			"permissions for every identity except those exempted here.\n\n" +
 			"A service already protected -- from the console, or by another configuration -- is " +
-			"rejected rather than adopted; import it instead.\n\n" +
+			"rejected rather than adopted.\n\n" +
 			"Exemptions are attributes of the protect rather than resources of their own: each apply " +
 			"converges the platform's exemption set on the configured one, and the platform removes " +
 			"them when the control is unmanaged or switched to a disable.\n\n" +
