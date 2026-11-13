@@ -1,0 +1,248 @@
+internal/client/pond.go
+  s_bae99c19ba4247::t_494baeb2ede4c1 40
+  s_bae99c19ba4247::t_ffdc53d40b5069 37-39
+  s_bae99c19ba4247::t_846538799222c8 41-43
+  s_bae99c19ba4247::t_8c3e219c8131b9 1-36,44-81
+internal/client/jit.go
+  s_bae99c19ba4247::t_09f1aba85b9bf3 239-240
+  s_bae99c19ba4247::t_f3931cc8043613 236-238
+  s_bae99c19ba4247::t_c4a5caef9fc9fb 241-243
+  s_bae99c19ba4247::t_df370bc5f548c0 1-235,244-281
+internal/client/submission.go
+  s_bae99c19ba4247::t_6f1c3f89a530d8 34-36
+  s_bae99c19ba4247::t_d82c1671b498f7 109
+  s_bae99c19ba4247::t_017cd00be29310 31-33
+  s_bae99c19ba4247::t_ac3937607f915f 37-39,106-108
+  s_bae99c19ba4247::t_7a154a23c5cd1f 110-112
+  s_bae99c19ba4247::t_71b64a089d5a17 1-30,40-105,113-221
+internal/client/region_test.go
+  s_bae99c19ba4247::t_5dbe59304f9bb5 114
+  s_bae99c19ba4247::t_25eb8ad7260823 1-113,115-157
+internal/client/client_test.go
+  s_bae99c19ba4247::t_5dbe59304f9bb5 153
+  s_bae99c19ba4247::t_41d14e7e106b54 1-152,154-197
+internal/client/client.go
+  s_bae99c19ba4247::t_b92d632ce7ad65 114
+  s_bae99c19ba4247::t_b9ac490b0c1c00 111-113
+  s_bae99c19ba4247::t_2a4d9cb703792e 115-117
+  s_bae99c19ba4247::t_16989756fd6780 1-110,118-221
+internal/client/hierarchy_test.go
+  s_bae99c19ba4247::t_e112f6e82015c3 14-15
+  s_bae99c19ba4247::t_5dbe59304f9bb5 16-80
+  s_bae99c19ba4247::t_41e4ff93d48959 1-13,81-171
+internal/client/control_status.go
+  s_bae99c19ba4247::t_e3e73b2102f75f 18
+  s_bae99c19ba4247::t_38f93aafcf0d7f 15-17
+  s_bae99c19ba4247::t_c96b6604b12a85 19-21
+  s_bae99c19ba4247::t_572e1f8f5256e1 1-14,22-171
+GUIDE.md
+  s_bae99c19ba4247::t_5dbe59304f9bb5 508
+  s_bae99c19ba4247::t_1bba6a0eef2c3e 1-507,509-982
+internal/client/jit_test.go
+  s_bae99c19ba4247::t_fe94d7e0b33507 206
+  s_bae99c19ba4247::t_6f26183374b509 203-205
+  s_bae99c19ba4247::t_66eb7b3ede879f 207-209
+  s_bae99c19ba4247::t_2772b2eff8d151 1-202,210-246
+.gitignore
+  s_bae99c19ba4247::t_909aa729cae4c7 1-7
+LICENSE
+  s_bae99c19ba4247::t_9babfb7d2aa212 1-374
+Makefile
+  s_bae99c19ba4247::t_d930fb73f6b204 1-49
+README.md
+  s_bae99c19ba4247::t_d436067310b1b5 1-417
+docs/data-sources/control_transaction.md
+  s_bae99c19ba4247::t_5aa75902a30392 1-61
+docs/data-sources/deploy_account.md
+  s_bae99c19ba4247::t_a3da0b87c67abc 1-52
+docs/data-sources/entitlements.md
+  s_bae99c19ba4247::t_7d378216c115e3 1-80
+docs/data-sources/scope.md
+  s_bae99c19ba4247::t_843c14cd16972e 1-60
+docs/data-sources/suggested_exemptions.md
+  s_bae99c19ba4247::t_3b7d11408865ca 1-91
+docs/index.md
+  s_bae99c19ba4247::t_4289780a225ece 1-38
+docs/resources/account_disabled_service.md
+  s_bae99c19ba4247::t_766f62d6ac0336 1-76
+docs/resources/account_disabled_services_authoritative.md
+  s_bae99c19ba4247::t_9a02d763a3a9cf 1-69
+docs/resources/account_protected_service.md
+  s_bae99c19ba4247::t_844873159e1aaa 1-96
+docs/resources/control_reset.md
+  s_bae99c19ba4247::t_2ad7f35b18125f 1-93
+docs/resources/control_submission.md
+  s_bae99c19ba4247::t_c64d64cc9f7494 1-71
+docs/resources/exempted_identity.md
+  s_bae99c19ba4247::t_4ea7a818144226 1-86
+docs/resources/jit_configuration.md
+  s_bae99c19ba4247::t_a084a6dd1f6ead 1-102
+docs/resources/region_control.md
+  s_bae99c19ba4247::t_c58d7540769217 1-93
+examples/complete/README.md
+  s_bae99c19ba4247::t_4c90dedfcabfe9 1-30
+examples/complete/main.tf
+  s_bae99c19ba4247::t_fb714b5dcf4857 1-135
+examples/complete/outputs.tf
+  s_bae99c19ba4247::t_a324dc25ac1861 1-54
+examples/complete/terraform.tfvars
+  s_bae99c19ba4247::t_ebffe077bb5513 1-78
+examples/complete/variables.tf
+  s_bae99c19ba4247::t_dd985f7e57ee44 1-66
+examples/data-sources/sonrai_control_transaction/data-source.tf
+  s_bae99c19ba4247::t_de344962ab165b 1-22
+examples/data-sources/sonrai_deploy_account/data-source.tf
+  s_bae99c19ba4247::t_4aafa837770609 1-20
+examples/data-sources/sonrai_entitlements/data-source.tf
+  s_bae99c19ba4247::t_a8d8363de8d8e6 1-30
+examples/data-sources/sonrai_scope/data-source.tf
+  s_bae99c19ba4247::t_112b96287c0d41 1-24
+examples/data-sources/sonrai_suggested_exemptions/data-source.tf
+  s_bae99c19ba4247::t_06aac6fcda46ac 1-40
+examples/provider/provider.tf
+  s_bae99c19ba4247::t_d34d997f38913a 1-14
+examples/resources/sonrai_account_disabled_service/import.sh
+  s_bae99c19ba4247::t_49eef6934085f6 1-2
+examples/resources/sonrai_account_disabled_service/resource.tf
+  s_bae99c19ba4247::t_643d37456ed3ca 1-22
+examples/resources/sonrai_account_disabled_services_authoritative/import.sh
+  s_bae99c19ba4247::t_b24013e0673e7e 1-2
+examples/resources/sonrai_account_disabled_services_authoritative/resource.tf
+  s_bae99c19ba4247::t_caa306de59ca53 1-19
+examples/resources/sonrai_account_protected_service/import.sh
+  s_bae99c19ba4247::t_a95603dff6f7b9 1-2
+examples/resources/sonrai_account_protected_service/resource.tf
+  s_bae99c19ba4247::t_4ff0ecacdbcc32 1-31
+examples/resources/sonrai_control_reset/resource.tf
+  s_bae99c19ba4247::t_4606edfe65a4d6 1-27
+examples/resources/sonrai_control_submission/import.sh
+  s_bae99c19ba4247::t_98353c1238a50c 1-2
+examples/resources/sonrai_control_submission/resource.tf
+  s_bae99c19ba4247::t_0d1379e4c844e8 1-17
+examples/resources/sonrai_exempted_identity/import.sh
+  s_bae99c19ba4247::t_9c1e193aa2613c 1-3
+examples/resources/sonrai_exempted_identity/resource.tf
+  s_bae99c19ba4247::t_537d90b2adc233 1-22
+examples/resources/sonrai_jit_configuration/import.sh
+  s_bae99c19ba4247::t_c51495a9932f00 1-2
+examples/resources/sonrai_jit_configuration/resource.tf
+  s_bae99c19ba4247::t_23aa7a147ba198 1-30
+examples/resources/sonrai_region_control/import.sh
+  s_bae99c19ba4247::t_9c186f9730f6bc 1-2
+examples/resources/sonrai_region_control/resource.tf
+  s_bae99c19ba4247::t_14e81dc776a42b 1-22
+go.mod
+  s_bae99c19ba4247::t_cd5921e30b1108 1-34
+go.sum
+  s_bae99c19ba4247::t_afbffee75feba9 1-83
+internal/client/bulk_service_actions.go
+  s_bae99c19ba4247::t_c8a6bb12047970 1-141
+internal/client/bulk_service_actions_test.go
+  s_bae99c19ba4247::t_378818e3967734 1-81
+internal/client/control_status_test.go
+  s_bae99c19ba4247::t_039831f1cb29cd 1-126
+internal/client/deploy_account.go
+  s_bae99c19ba4247::t_a2fdc95ef45f6b 1-137
+internal/client/deploy_account_test.go
+  s_bae99c19ba4247::t_e32331d9e81521 1-94
+internal/client/errors.go
+  s_bae99c19ba4247::t_46beb5d700c6cd 1-30
+internal/client/exempted_identity.go
+  s_bae99c19ba4247::t_9d5a29d8d34ecc 1-358
+internal/client/exempted_identity_test.go
+  s_bae99c19ba4247::t_630125d64af6a0 1-134
+internal/client/hierarchy.go
+  s_bae99c19ba4247::t_ebc3b22de2545c 1-159
+internal/client/pond_test.go
+  s_bae99c19ba4247::t_6c6c1bb3ce1ece 1-46
+internal/client/protect.go
+  s_bae99c19ba4247::t_331f3167d58790 1-326
+internal/client/protect_test.go
+  s_bae99c19ba4247::t_7a9c2030963fb7 1-165
+internal/client/region.go
+  s_bae99c19ba4247::t_ae9aa589857d1c 1-180
+internal/client/reset.go
+  s_bae99c19ba4247::t_6df4aabf6ac548 1-41
+internal/client/reset_test.go
+  s_bae99c19ba4247::t_fc087d4bf112fe 1-42
+internal/client/submission_test.go
+  s_bae99c19ba4247::t_00556d11859a2f 1-213
+internal/provider/account_disabled_service_resource.go
+  s_bae99c19ba4247::t_64d25cb43d86d1 1-284
+internal/provider/account_disabled_service_resource_test.go
+  s_bae99c19ba4247::t_09c3662e6877cd 1-129
+internal/provider/account_disabled_services_authoritative_resource.go
+  s_bae99c19ba4247::t_671b0ae6c6ce5d 1-316
+internal/provider/account_disabled_services_authoritative_resource_test.go
+  s_bae99c19ba4247::t_2ff13b335c7666 1-105
+internal/provider/account_protected_service_resource.go
+  s_bae99c19ba4247::t_9253c131b135f7 1-458
+internal/provider/account_protected_service_resource_test.go
+  s_bae99c19ba4247::t_4d5fcde7e5c0c8 1-91
+internal/provider/control_reset_resource.go
+  s_bae99c19ba4247::t_5e76b03010c4af 1-299
+internal/provider/control_reset_resource_test.go
+  s_bae99c19ba4247::t_a02f9c3f740fd5 1-152
+internal/provider/control_submission_resource.go
+  s_bae99c19ba4247::t_66a606fe1069b3 1-294
+internal/provider/control_submission_resource_test.go
+  s_bae99c19ba4247::t_66a15c2c91b528 1-125
+internal/provider/control_transaction_data_source.go
+  s_bae99c19ba4247::t_d5ac636dfc62ef 1-161
+internal/provider/control_transaction_data_source_test.go
+  s_bae99c19ba4247::t_acc763a91209d2 1-79
+internal/provider/deploy_account_data_source.go
+  s_bae99c19ba4247::t_c61ecf20fb48d7 1-111
+internal/provider/deploy_account_data_source_test.go
+  s_bae99c19ba4247::t_eefc876a341cce 1-53
+internal/provider/entitlements_data_source.go
+  s_bae99c19ba4247::t_b977d41c4ab7bf 1-180
+internal/provider/entitlements_data_source_test.go
+  s_bae99c19ba4247::t_4c0bd4f117c466 1-68
+internal/provider/exempted_identity_resource.go
+  s_bae99c19ba4247::t_45fdada7d80fe8 1-439
+internal/provider/exempted_identity_resource_test.go
+  s_bae99c19ba4247::t_1a250e0d68b949 1-156
+internal/provider/helpers.go
+  s_bae99c19ba4247::t_b7e8b1ffff72fa 1-350
+internal/provider/helpers_test.go
+  s_bae99c19ba4247::t_b78ea405b52c55 1-19
+internal/provider/jit_configuration_resource.go
+  s_bae99c19ba4247::t_9eace3d23862e8 1-329
+internal/provider/jit_configuration_resource_test.go
+  s_bae99c19ba4247::t_a590a08d92dd31 1-121
+internal/provider/provider.go
+  s_bae99c19ba4247::t_df21bd1e3ed66a 1-148
+internal/provider/provider_test.go
+  s_bae99c19ba4247::t_a961c28dfeef7f 1-65
+internal/provider/region_control_resource.go
+  s_bae99c19ba4247::t_9e9f25375b2e5c 1-559
+internal/provider/region_control_resource_test.go
+  s_bae99c19ba4247::t_6d33d10426cabb 1-159
+internal/provider/scope_data_source.go
+  s_bae99c19ba4247::t_814e971e8b6776 1-128
+internal/provider/scope_data_source_test.go
+  s_bae99c19ba4247::t_9b6d2c8815cbd4 1-58
+internal/provider/suggested_exemptions_data_source.go
+  s_bae99c19ba4247::t_1983b05e14cc6f 1-184
+main.go
+  s_bae99c19ba4247::t_26ec9d411a693c 1-28
+terraform-registry-manifest.json
+  s_bae99c19ba4247::t_96b1bf5afa30ad 1-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c0f66c525ff333037af20ed91afac860ae0177fe",
+  "prompts": {},
+  "sessions": {
+    "s_bae99c19ba4247": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "edd202e5-80a8-4930-852b-ca1841428080",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Chris Daigle <chris.daigle@sonraisecurity.com>"
+    }
+  }
+}
