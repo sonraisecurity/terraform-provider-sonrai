@@ -1,0 +1,64 @@
+version: 2.1
+
+# Releases follow the toolkit commitizen flow: a conventional-commit merge to
+# main computes the next version, .circleci/release.sh builds and signs the
+# provider artifacts with GoReleaser, and toolkit/release tags the commit and
+# creates the GitHub release with dist/release/* attached. GoReleaser never
+# publishes; the toolkit owns tagging and the release.
+
+orbs:
+  toolkit: sonraisecurity/toolkit@1.19.0
+
+# Floor, not the version the build runs on: the Makefile's GOTOOLCHAIN picks
+# that, and the image only has to be new enough to fetch it.
+go_executor: &go_executor
+  name: toolkit/go
+  image: cimg/go:1.26.10
+
+workflows:
+  build-and-release:
+    jobs:
+      - toolkit/initialize_go:
+          context: &read_ctx github-read
+          executor: *go_executor
+          mod_command: make mod
+          init_submodules: false
+      - toolkit/test_go:
+          context: *read_ctx
+          requires: [toolkit/initialize_go]
+          executor: *go_executor
+          branch: << pipeline.git.branch >>
+          # gofmt, vet, race tests, docs freshness and govulncheck.
+          test_command: make ci-check
+
+      # Production release. Only this job receives the signing key. The branch
+      # filter is hygiene, not a control: a branch can edit this file, so the
+      # terraform-registry-signing context must also carry a CircleCI context
+      # restriction limiting it to main and release-* (see RELEASING.md).
+      - toolkit/release:
+          name: release
+          context: [github-write, terraform-registry-signing]
+          requires: [toolkit/test_go]
+          executor: *go_executor
+          filters:
+            branches:
+              only: [main, /^release-.*/]
+          build_command: .circleci/release.sh
+          release_assets: dist/release/*
+          docker: false
+          pre_commit: false
+
+      # Feature branches: unsigned GoReleaser snapshot to prove the release
+      # config still builds. No signing context.
+      - toolkit/release:
+          name: release-snapshot
+          context: [github-write]
+          requires: [toolkit/test_go]
+          executor: *go_executor
+          filters:
+            branches:
+              ignore: [main, /^release-.*/]
+          build_command: .circleci/release.sh
+          release_assets: dist/release/*
+          docker: false
+          pre_commit: false
