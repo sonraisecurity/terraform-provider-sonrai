@@ -1,0 +1,7 @@
+terraform-provider-sonrai
+dist/
+local-test/
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
