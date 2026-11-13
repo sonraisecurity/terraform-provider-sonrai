@@ -1,0 +1,8 @@
+---
+commitizen:
+  bump_message: 'chore(release): v$new_version [ci skip]'
+  major_version_zero: true
+  name: cz_conventional_commits
+  tag_format: v$version
+  version: v0.0.1
+  version_scheme: semver

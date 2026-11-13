@@ -1,0 +1,76 @@
+version: 2
+
+# Pinned so .circleci/release.sh can rely on the artifact prefix.
+project_name: terraform-provider-sonrai
+
+before:
+  hooks:
+    # Verify, never tidy: the release must build from the same dependency set
+    # CI tested, not one rewritten at release time.
+    - go mod verify
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    mod_timestamp: '{{ .CommitTimestamp }}'
+    flags:
+      - -trimpath
+    ldflags:
+      - '-s -w -X main.version={{ .Version }}'
+    goos:
+      - linux
+      - darwin
+      - windows
+      - freebsd
+    goarch:
+      - amd64
+      - arm64
+      - '386'
+      - arm
+    ignore:
+      - goos: darwin
+        goarch: '386'
+      - goos: darwin
+        goarch: arm
+    # The registry resolves the executable by this name, so it is fixed.
+    binary: '{{ .ProjectName }}_v{{ .Version }}'
+
+archives:
+  - formats: [zip]
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+
+checksum:
+  name_template: '{{ .ProjectName }}_{{ .Version }}_SHA256SUMS'
+  algorithm: sha256
+  extra_files:
+    - glob: terraform-registry-manifest.json
+      name_template: '{{ .ProjectName }}_{{ .Version }}_manifest.json'
+
+# The detached signature over SHA256SUMS is what the registry verifies against
+# the public key on the publisher account, and what `terraform init` checks
+# before installing. Without it the release is ignored.
+signs:
+  - artifacts: checksum
+    # The key is passphrase-protected and CI has no pinentry, so the
+    # passphrase is fed on stdin with loopback pinentry.
+    stdin: '{{ .Env.PASSPHRASE }}'
+    args:
+      - --batch
+      - --pinentry-mode
+      - loopback
+      - --passphrase-fd
+      - '0'
+      - --local-user
+      - '{{ .Env.GPG_FINGERPRINT }}'
+      - --output
+      - '${signature}'
+      - --detach-sign
+      - '${artifact}'
+
+# GoReleaser never publishes. toolkit/release tags the commit and creates the
+# GitHub release from dist/release/, staged by .circleci/release.sh.
+release:
+  disable: true
+
+changelog:
+  disable: true
