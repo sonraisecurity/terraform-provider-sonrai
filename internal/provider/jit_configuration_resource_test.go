@@ -162,7 +162,7 @@ func TestEntitlementDefaultsKeepConfiguredAutoPod(t *testing.T) {
 	want := map[string]client.JitEntitlement{
 		"OnCallReadOnly":  {Name: "OnCallReadOnly", Type: client.EntitlementPermissionSet, FullAccess: true},
 		"OnCallReadWrite": {Name: "OnCallReadWrite", Type: client.EntitlementPermissionSet, FullAccess: true},
-		"ReadOnlyAccess": {Name: "ReadOnlyAccess", Type: "AWS_SAML_ROLE", FullAccess: false},
+		"ReadOnlyAccess":  {Name: "ReadOnlyAccess", Type: "AWS_SAML_ROLE", FullAccess: false},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d entitlements, want %d: %v", len(got), len(want), got)
