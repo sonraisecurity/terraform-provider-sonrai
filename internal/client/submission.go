@@ -219,3 +219,51 @@ func (c *Client) WaitForTransactionStatus(ctx context.Context, transactionID, ta
 		}
 	}
 }
+
+// deployedTemplateLookback bounds how far back DeployedTemplateLocation looks.
+// Submissions that alter nothing deployable (JIT changes, console submits,
+// maintenance) produce no template, so the deployed one can sit some way
+// behind the newest transaction.
+const deployedTemplateLookback = 100
+
+const recentTransactionsQuery = `
+query recentControlTransactions($rootScope: String!, $limit: Long) {
+  ControlTransactions(where: {rootScope: {op: EQ, value: $rootScope}}) {
+    items(orderBy: {createdDate: {order: DESC}}, limit: $limit) {
+      transactionId
+      status
+      rootScope
+      templateLocation
+    }
+  }
+}`
+
+// DeployedTemplateLocation returns the template of the most recent completed
+// transaction under rootScope that produced one, which is the template the
+// firewall stack is running. It returns "" when none of the recent
+// transactions produced a template.
+//
+// A transaction reaches COMPLETED only once its template is deployed, so a
+// failed or still-running one is never taken for the deployed template.
+func (c *Client) DeployedTemplateLocation(ctx context.Context, rootScope string) (string, error) {
+	var out struct {
+		ControlTransactions struct {
+			Items []Transaction `json:"items"`
+		} `json:"ControlTransactions"`
+	}
+	vars := map[string]any{"rootScope": rootScope, "limit": deployedTemplateLookback}
+	if err := c.Execute(ctx, recentTransactionsQuery, vars, &out); err != nil {
+		return "", err
+	}
+	for _, t := range out.ControlTransactions.Items {
+		// The filter is EQ; anything else is a template from another
+		// organization's firewall and must not be deployed here.
+		if t.RootScope != "" && t.RootScope != rootScope {
+			return "", fmt.Errorf("transactions for %q came back for %q", rootScope, t.RootScope)
+		}
+		if t.TemplateLocation != "" && NormalizeStatus(t.Status) == StatusCompleted {
+			return t.TemplateLocation, nil
+		}
+	}
+	return "", nil
+}

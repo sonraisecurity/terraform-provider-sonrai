@@ -63,3 +63,24 @@ Organizational units, folders, management groups and roots are not accepted. Lis
 - `pending` (Boolean) True while this control has a staged change that has not been submitted and deployed.
 - `scope` (String) Canonical scope path this resolved to, recomputed on every read.
 - `status` (String) Control status reported by the platform: `Disabled`, `Protected`, `Unprotected` or `Non-Privileged`. Reads `Disabled` from the moment a block is staged.
+
+## Import
+
+Import is supported using the following syntax:
+
+In Terraform v1.5.0 and later, the [`import` block](https://developer.hashicorp.com/terraform/language/import) can be used with the `id` attribute, for example:
+
+```terraform
+# Import ID: control_key@root_scope@resource_id.
+import {
+  to = sonrai_account_disabled_service.cloud9_prod
+  id = "cloud9@aws/r-abcd@123456789012"
+}
+```
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+# Import ID: control_key@root_scope@resource_id.
+terraform import sonrai_account_disabled_service.cloud9_prod 'cloud9@aws/r-abcd@123456789012'
+```

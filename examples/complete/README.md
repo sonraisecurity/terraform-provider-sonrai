@@ -1,8 +1,9 @@
 # Complete example
 
 One root module covering the whole cycle: disable services, protect services
-with exemptions, exempt identities from whole control classes, submit, and
-deploy the resulting CloudFormation template.
+with exemptions, exempt identities from whole control classes, disable regions,
+configure Just-in-Time access, submit, and deploy the resulting CloudFormation
+template.
 
 Everything is driven from `terraform.tfvars`. Replace the account ids, root
 scope and identities with your own.
@@ -25,6 +26,8 @@ your root scope, remove the `prevent_destroy` block from the stack in
 `main.tf`, and apply. One apply deletes the stack, resets every control under
 the root scope back to staged, and waits for it to finish.
 
-See the [walkthrough](../../GUIDE.md#walkthrough) for what each step does, and
+See the [walkthrough](../../GUIDE.md#walkthrough) for what each step does,
 [Reset everything at once](../../GUIDE.md#reset-everything-at-once) for the
-teardown in full.
+teardown in full, and
+[Importing an existing deployment](../../GUIDE.md#importing-an-existing-deployment)
+if the firewall is already configured.

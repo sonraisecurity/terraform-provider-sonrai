@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -209,5 +210,50 @@ func TestWaitForTransactionStatusAcceptsEitherSpelling(t *testing.T) {
 	}
 	if tx.Status != "CANCELLED" {
 		t.Errorf("status = %q, raw platform value should be preserved", tx.Status)
+	}
+}
+
+func TestDeployedTemplateLocationSkipsTemplatelessAndUnfinished(t *testing.T) {
+	var sent string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		sent = string(body)
+		_, _ = w.Write([]byte(`{"data":{"ControlTransactions":{"items":[
+			{"transactionId":"jit","status":"COMPLETED","rootScope":"aws/r-abcd","templateLocation":""},
+			{"transactionId":"running","status":"DEPLOY_STARTED","rootScope":"aws/r-abcd","templateLocation":"https://b/running.json"},
+			{"transactionId":"failed","status":"FAILED","rootScope":"aws/r-abcd","templateLocation":"https://b/failed.json"},
+			{"transactionId":"deployed","status":"Completed","rootScope":"aws/r-abcd","templateLocation":"https://b/deployed.json"},
+			{"transactionId":"older","status":"COMPLETED","rootScope":"aws/r-abcd","templateLocation":"https://b/older.json"}]}}}`))
+	})
+	got, err := c.DeployedTemplateLocation(context.Background(), "aws/r-abcd")
+	if err != nil {
+		t.Fatalf("DeployedTemplateLocation: %v", err)
+	}
+	if got != "https://b/deployed.json" {
+		t.Errorf("got %q, want the newest completed transaction with a template", got)
+	}
+	if !strings.Contains(sent, "DESC") {
+		t.Error("query must order newest first")
+	}
+}
+
+func TestDeployedTemplateLocationNone(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"ControlTransactions":{"items":[
+			{"transactionId":"jit","status":"COMPLETED","rootScope":"aws/r-abcd","templateLocation":""}]}}}`))
+	})
+	got, err := c.DeployedTemplateLocation(context.Background(), "aws/r-abcd")
+	if err != nil || got != "" {
+		t.Errorf("got %q, %v; want empty and no error", got, err)
+	}
+}
+
+func TestDeployedTemplateLocationRejectsOtherRootScope(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"ControlTransactions":{"items":[
+			{"transactionId":"x","status":"COMPLETED","rootScope":"aws/r-zzzz","templateLocation":"https://b/x.json"}]}}}`))
+	})
+	if _, err := c.DeployedTemplateLocation(context.Background(), "aws/r-abcd"); err == nil {
+		t.Error("a transaction from another root scope must be rejected, not deployed")
 	}
 }

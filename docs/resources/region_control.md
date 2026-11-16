@@ -80,3 +80,27 @@ resource "sonrai_region_control" "no_apac" {
 - `region_name` (String) Human-readable name of the region.
 - `scope` (String) Canonical scope path the account resolved to, recomputed on every read.
 - `status` (String) Status reported by the platform: `ENABLED` or `DISABLED`.
+
+## Import
+
+Import is supported using the following syntax:
+
+In Terraform v1.5.0 and later, the [`import` block](https://developer.hashicorp.com/terraform/language/import) can be used with the `id` attribute, for example:
+
+```terraform
+# Import ID: region_id@root_scope@resource_id.
+#
+# An imported control has no recorded previous state, so destroying it
+# re-enables the region rather than restoring what was there before.
+import {
+  to = sonrai_region_control.no_apac_sandbox
+  id = "ap-south-1@aws/r-abcd@123456789012"
+}
+```
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+# Import ID: region_id@root_scope@resource_id.
+terraform import sonrai_region_control.no_apac_sandbox 'ap-south-1@aws/r-abcd@123456789012'
+```

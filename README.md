@@ -23,13 +23,14 @@ an organization's controls lives nowhere you can review or diff.
   `sonrai_control_reset` ordered after the stack so the reset can finish. It is
   gated by a confirmation compared while the plan is built, so a wrong scope
   stops the run before anything is deleted.
-- **Reorganization-proof addressing.** Scope paths are resolved on every
-  operation, so moving an account between organizational units needs no
-  configuration change.
-- **Terraform and OpenTofu alike.** The provider declares no Terraform actions,
-  which OpenTofu does not implement. No documented workflow needs `-target` or
-  `-replace` either; those are for recovering from a bad state, not for routine
-  operation.
+- **Accounts addressed by id.** Scope paths are resolved on every operation, so
+  moving an account between organizational units needs no configuration
+  change.
+- **Import for existing deployments.** Controls, exemptions, regions, JIT
+  configuration and the current submission can all be imported, so a firewall
+  configured in the console can be brought under Terraform.
+- **Works with Terraform and OpenTofu.** Every feature is a plain resource or
+  data source.
 
 ### Resources
 
@@ -78,7 +79,8 @@ configuration.
 
 To *use* the provider:
 
-- Terraform 1.5 or later, or OpenTofu 1.6 or later. On macOS,
+- Terraform 1.5 or later, or OpenTofu 1.6 or later (1.7 or later to import
+  with `for_each`). On macOS,
   `brew install hashicorp/tap/terraform` or `brew install opentofu`; plain
   `brew install terraform` is frozen at 1.5.7. Elsewhere, see
   [Install Terraform](https://developer.hashicorp.com/terraform/install).
@@ -104,66 +106,19 @@ Commit the `.terraform.lock.hcl` that `terraform init` writes. It pins the
 provider version and the checksums of the release you reviewed; move to a newer
 release deliberately with `terraform init -upgrade`.
 
-### Installing for OpenTofu
+### Using OpenTofu
 
-The provider is not yet listed in the OpenTofu Registry, so `tofu init` cannot
-download it. Install the signed release from GitHub into OpenTofu's local
-plugin directory instead. These are the same files the Terraform Registry
-serves.
-
-**1. Download the release for your platform** — `darwin_arm64`, `darwin_amd64`,
-`linux_amd64`, `linux_arm64`, `windows_amd64` and others are on the
-[releases page](https://github.com/sonraisecurity/terraform-provider-sonrai/releases):
+The provider is also published on the OpenTofu Registry, and the same
+configuration works unchanged. `tofu init` reads the same
+`source = "sonraisecurity/sonrai"` and installs it from `registry.opentofu.org`:
 
 ```sh
-VERSION=0.1.0
-PLATFORM=darwin_arm64
-NAME=terraform-provider-sonrai_${VERSION}
-BASE=https://github.com/sonraisecurity/terraform-provider-sonrai/releases/download/v${VERSION}
-
-mkdir sonrai-download && cd sonrai-download
-curl -fL -O "$BASE/${NAME}_${PLATFORM}.zip" \
-        -O "$BASE/${NAME}_SHA256SUMS" \
-        -O "$BASE/${NAME}_SHA256SUMS.sig"
+tofu init
+tofu plan
 ```
 
-**2. Verify it.** OpenTofu does not check signatures on a provider installed
-this way — `tofu init` reports it as *unauthenticated* — so this step is the
-only one that proves the file came from Sonrai and was not altered:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/sonraisecurity/terraform-provider-sonrai/main/signing-key.asc | gpg --import
-gpg --verify "${NAME}_SHA256SUMS.sig" "${NAME}_SHA256SUMS"
-shasum -a 256 -c --ignore-missing "${NAME}_SHA256SUMS"
-```
-
-Continue only if `gpg` reports `Good signature from "Sonrai Security"`, signed
-using key `CF378842B8816DE99228D77F01875ECCE8BDD26E`, and `shasum` reports `OK`
-for the zip. gpg also warns that the key is not certified with a trusted
-signature; that is expected for a key you have not signed yourself, which is
-why you compare the fingerprint.
-
-**3. Put the zip, unextracted, where OpenTofu looks for local providers:**
-
-```sh
-MIRROR=~/.terraform.d/plugins/registry.opentofu.org/sonraisecurity/sonrai
-mkdir -p "$MIRROR"
-cp "${NAME}_${PLATFORM}.zip" "$MIRROR/"
-```
-
-`tofu init` now installs `sonraisecurity/sonrai` from there and every other
-provider, such as `hashicorp/aws`, from the OpenTofu Registry as usual.
-
-If your team runs OpenTofu on more than one platform, download and verify each
-platform's zip into the same directory, then record all of them in the lock
-file, or `tofu init` fails on the platforms it is missing:
-
-```sh
-tofu providers lock -fs-mirror="$HOME/.terraform.d/plugins" \
-  -platform=darwin_arm64 -platform=linux_amd64
-```
-
-Repeat these steps for each new release.
+Commit the lock file `tofu init` writes, as with Terraform. Every `terraform`
+command in this README and the GUIDE has a `tofu` equivalent.
 
 ### Start from the worked example
 
@@ -309,7 +264,7 @@ resource "sonrai_control_submission" "firewall" {
 
 resource "aws_cloudformation_stack" "firewall" {
   name         = "SonraiCloudPermissionFirewall"
-  template_url = sonrai_control_submission.firewall.template_location
+  template_url = sonrai_control_submission.firewall.stack_template_location
   capabilities = ["CAPABILITY_NAMED_IAM"]
 
   lifecycle {
@@ -343,6 +298,55 @@ resource "sonrai_exempted_identity" "break_glass" {
 
 Identities are matched as patterns, so one entry covers every account under the
 scope. AWS only.
+
+### Disable a region
+
+```hcl
+resource "sonrai_region_control" "no_apac_sandbox" {
+  root_scope  = "aws/r-abcd"
+  resource_id = "123456789012"
+  region_id   = "ap-south-1"
+  state       = "disabled"
+}
+```
+
+Use `state = "enabled"` to override an ancestor that disabled the region.
+Critical regions cannot be disabled. Destroying the resource restores the state
+the account had before, recorded in `previous_state`.
+
+### Configure Just-in-Time access
+
+```hcl
+resource "sonrai_jit_configuration" "sandbox" {
+  scope      = "aws/r-abcd/123456789012"
+  deny_first = true
+
+  enrolled_entitlements = [
+    { name = "PowerUserAccess" },
+    { name = "BreakGlassAccess", type = "AWS_ACCOUNT_ACCESS_ROLE", auto_pod = true },
+  ]
+}
+```
+
+This resource is authoritative for its scope: declaring it replaces whatever
+the scope already has, including enrolments made in the console. List what is
+available with the `sonrai_entitlements` data source first.
+
+### Import existing controls
+
+Every resource except `sonrai_control_reset` can be imported. Each resource
+page on the Registry lists its import ID, for example:
+
+```hcl
+import {
+  to = sonrai_account_disabled_service.cloud9_prod
+  id = "cloud9@aws/r-abcd@123456789012"
+}
+```
+
+To adopt a whole deployment, also import the CloudFormation stack and the
+submission it is running, so the first apply does not submit again. See
+[Importing an existing deployment](GUIDE.md#importing-an-existing-deployment).
 
 ### Remove controls
 
@@ -436,6 +440,12 @@ To take the firewall down deliberately, see [Reset an organization](#reset-an-or
 yours). An `org` argument in the `provider` block is overriding `SONRAI_ORG`.
 Remove it.
 
+**`Provider produced inconsistent final plan` on the stack's `outputs`.** The
+stack's `template_url` was empty in state and the apply gave it a template.
+Point `template_url` at `stack_template_location` rather than
+`template_location`, which is empty whenever a submission changes nothing
+deployable. Applying again clears the error.
+
 ## Configuration
 
 ### Provider
@@ -490,6 +500,8 @@ Set these in `terraform.tfvars`:
 | `disabled_services` | map(set(string)) | `{}` | Account id => control keys to disable, e.g. `"123456789012" = ["cloud9"]` |
 | `protected_services` | map(object) | `{}` | `resource_id`, `control_key`, `exempt_identities`, `exempt_sso_actor_ids` |
 | `exempted_identities` | map(object) | `{}` | `identity`, `exempt_from`, `sso`, `scope` |
+| `region_controls` | map(map(string)) | `{}` | Account id => region id => `disabled` or `enabled`, e.g. `"123456789012" = { "ap-south-1" = "disabled" }` |
+| `jit_configurations` | map(object) | `{}` | Keyed by scope: `deny_first`, `enrolled_entitlements` (`name`, `type`, `auto_pod`) |
 | `submit` | bool | `false` | Submit the staged changes and deploy the template |
 | `reset` | bool | `false` | Tear the deployment down and return every control to staged |
 | `reset_confirm` | string | `""` | Must repeat `root_scope` to arm a reset |

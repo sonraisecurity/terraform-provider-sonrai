@@ -46,7 +46,7 @@ func TestJitConfigurationScopeForcesReplacement(t *testing.T) {
 	if !ok || !scope.IsRequired() {
 		t.Fatal("scope must be required")
 	}
-	for _, name := range []string{"deny_first", "auto_pod", "enrolled_entitlements"} {
+	for _, name := range []string{"deny_first", "enrolled_entitlements"} {
 		attr, ok := attrs[name]
 		if !ok {
 			t.Fatalf("missing %s", name)

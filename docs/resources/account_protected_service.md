@@ -83,3 +83,25 @@ output "iam_prod" {
 - `status` (String) Control status reported by the platform: `Protected`, `Disabled`, `Unprotected` or `Non-Privileged`. Reads `Protected` from the moment a protect is staged.
 - `timeboxed_exempt_identities` (Set of String) Identities currently exempt from this control through a time-limited Permissions on Demand grant. Reported for visibility; not managed.
 - `timeboxed_exempt_sso_actor_ids` (Set of String) SSO actor ids currently exempt from this control through a time-limited Permissions on Demand grant. Reported for visibility; not managed.
+
+## Import
+
+Import is supported using the following syntax:
+
+In Terraform v1.5.0 and later, the [`import` block](https://developer.hashicorp.com/terraform/language/import) can be used with the `id` attribute, for example:
+
+```terraform
+# Import ID: control_key@root_scope@resource_id. The exemptions are read from
+# the platform, so declare the same ones or the next plan proposes a change.
+import {
+  to = sonrai_account_protected_service.iam_prod
+  id = "iam@aws/r-abcd@123456789012"
+}
+```
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+# Import ID: control_key@root_scope@resource_id.
+terraform import sonrai_account_protected_service.iam_prod 'iam@aws/r-abcd@123456789012'
+```

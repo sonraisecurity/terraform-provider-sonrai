@@ -38,7 +38,6 @@ query jitConfiguration($scope: String!) {
   JitConfiguration(where: {scope: {op: EQ, value: $scope}}) {
     items {
       scope
-      autoPod
       denyFirst { isEnabled isInherited isPending }
       permissionSets {
         name
@@ -55,6 +54,10 @@ query jitConfiguration($scope: String!) {
 //
 // Name is what both the read and the write use to identify it: the mutation
 // takes the name in its id field, not the permission set's own id.
+//
+// FullAccess is what the console calls AutoPoD for the entitlement: a session
+// through it is approved for protected actions without a Permissions on
+// Demand request.
 type JitEntitlement struct {
 	Name       string
 	Type       string
@@ -69,7 +72,6 @@ type JitEntitlement struct {
 type JitConfiguration struct {
 	Scope        string
 	DenyFirst    bool
-	AutoPod      bool
 	Entitlements []JitEntitlement
 
 	// Pending is true while any part of the configuration has a staged change
@@ -90,7 +92,11 @@ type JitConfigurationChange struct {
 // The mutation is a replace, not a merge: entitlements left out are unenrolled.
 // There is no per-entitlement mutation and no usable delete, so clearing a
 // configuration means calling this with no entitlements and denyFirst false.
-func (c *Client) SetJitConfiguration(ctx context.Context, scope string, denyFirst, autoPod bool, entitlements []JitEntitlement) (*JitConfigurationChange, error) {
+//
+// The input's scope-level autoPod is not sent. It belongs with GCP's level and
+// the platform accepts and discards it for AWS scopes; AutoPoD on AWS is
+// isFullAccess on each enrolled entitlement.
+func (c *Client) SetJitConfiguration(ctx context.Context, scope string, denyFirst bool, entitlements []JitEntitlement) (*JitConfigurationChange, error) {
 	enrolled := make([]map[string]any, 0, len(entitlements))
 	for _, e := range entitlements {
 		if e.Name == "" {
@@ -119,7 +125,6 @@ func (c *Client) SetJitConfiguration(ctx context.Context, scope string, denyFirs
 		"input": map[string]any{
 			"scope":                  scope,
 			"isDenyFirst":            denyFirst,
-			"autoPod":                autoPod,
 			"enrolledPermissionSets": enrolled,
 		},
 	}
@@ -142,7 +147,6 @@ func (c *Client) JitConfiguration(ctx context.Context, scope string) (*JitConfig
 		JitConfiguration struct {
 			Items []struct {
 				Scope     string `json:"scope"`
-				AutoPod   bool   `json:"autoPod"`
 				DenyFirst struct {
 					IsEnabled   bool `json:"isEnabled"`
 					IsInherited bool `json:"isInherited"`
@@ -171,7 +175,6 @@ func (c *Client) JitConfiguration(ctx context.Context, scope string) (*JitConfig
 	item := out.JitConfiguration.Items[0]
 	cfg := &JitConfiguration{
 		Scope:   item.Scope,
-		AutoPod: item.AutoPod,
 		Pending: item.DenyFirst.IsPending,
 	}
 	// An inherited deny-first is in force here but belongs to an ancestor.

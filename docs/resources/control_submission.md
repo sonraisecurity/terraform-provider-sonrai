@@ -5,7 +5,7 @@ subcategory: ""
 description: |-
   Submits every control change staged under a root scope as one transaction.
   Staging resources such as sonrai_account_disabled_service take effect only once submitted. A submission covers all staged changes under its root scope, including any staged from the console. Use one per root scope, and do not run concurrent applies against the same root scope.
-  When the submitted changes require it, the transaction produces a CloudFormation template. Deploy it with aws_cloudformation_stack using template_location, or from the console.
+  When the submitted changes require it, the transaction produces a CloudFormation template. Deploy it with aws_cloudformation_stack using stack_template_location, or from the console.
 ---
 
 # sonrai_control_submission (Resource)
@@ -14,7 +14,7 @@ Submits every control change staged under a root scope as one transaction.
 
 Staging resources such as `sonrai_account_disabled_service` take effect only once submitted. A submission covers all staged changes under its root scope, including any staged from the console. Use one per root scope, and do not run concurrent applies against the same root scope.
 
-When the submitted changes require it, the transaction produces a CloudFormation template. Deploy it with `aws_cloudformation_stack` using `template_location`, or from the console.
+When the submitted changes require it, the transaction produces a CloudFormation template. Deploy it with `aws_cloudformation_stack` using `stack_template_location`, or from the console.
 
 ## Example Usage
 
@@ -54,7 +54,32 @@ output "transaction" {
 ### Read-Only
 
 - `id` (String) Transaction id of this submission.
+- `stack_template_location` (String) The template the firewall stack should run once this submission is deployed: `template_location` when this transaction produced one, and otherwise the template of the most recent completed transaction under the root scope that did, which is the one already deployed. Empty only when no recent transaction produced a template. Use this, not `template_location`, as the stack's `template_url`: a submission that changes nothing deployable then leaves the stack as it is.
 - `status` (String) Transaction status reported by the platform. Only `COMPLETED`, `FAILED` and `CANCELED` are terminal; the values seen on the way vary with what is being deployed.
 - `status_message` (String) Human-readable detail accompanying the status.
 - `template_location` (String) CloudFormation template this transaction produced. Empty when the submitted changes do not alter the template, in which case there is nothing to deploy.
 - `transaction_id` (String) Transaction id returned by the platform.
+
+## Import
+
+Import is supported using the following syntax:
+
+In Terraform v1.5.0 and later, the [`import` block](https://developer.hashicorp.com/terraform/language/import) can be used with the `id` attribute, for example:
+
+```terraform
+# Import ID: the transaction id. To adopt a deployment, import the transaction
+# the stack is running, read from its SonraiId output ("<org>:<transaction id>").
+# The imported submission takes on the configured triggers without submitting
+# again.
+import {
+  to = sonrai_control_submission.firewall
+  id = "a1b2c3d4-0000-4000-8000-000000000000"
+}
+```
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+# Import ID: the transaction id.
+terraform import sonrai_control_submission.firewall 'a1b2c3d4-0000-4000-8000-000000000000'
+```

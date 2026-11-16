@@ -294,9 +294,9 @@ func wasApplied(ctx context.Context, api *client.Client, scope string, controlKe
 // jitEntitlementAttrTypes mirrors the nested object on
 // sonrai_jit_configuration.enrolled_entitlements.
 var jitEntitlementAttrTypes = map[string]attr.Type{
-	"name":        types.StringType,
-	"type":        types.StringType,
-	"full_access": types.BoolType,
+	"name":     types.StringType,
+	"type":     types.StringType,
+	"auto_pod": types.BoolType,
 }
 
 func entitlementsFromSet(ctx context.Context, set types.Set) ([]client.JitEntitlement, diag.Diagnostics) {
@@ -318,7 +318,7 @@ func entitlementsFromSet(ctx context.Context, set types.Set) ([]client.JitEntitl
 		out = append(out, client.JitEntitlement{
 			Name:       m.Name.ValueString(),
 			Type:       entitlementType,
-			FullAccess: m.FullAccess.ValueBool(),
+			FullAccess: m.AutoPod.ValueBool(),
 		})
 	}
 	return out, diags
@@ -330,9 +330,9 @@ func entitlementsToSet(ctx context.Context, entitlements []client.JitEntitlement
 	var diags diag.Diagnostics
 	for _, e := range entitlements {
 		obj, d := types.ObjectValue(jitEntitlementAttrTypes, map[string]attr.Value{
-			"name":        types.StringValue(e.Name),
-			"type":        types.StringValue(e.Type),
-			"full_access": types.BoolValue(e.FullAccess),
+			"name":     types.StringValue(e.Name),
+			"type":     types.StringValue(e.Type),
+			"auto_pod": types.BoolValue(e.FullAccess),
 		})
 		diags.Append(d...)
 		values = append(values, obj)

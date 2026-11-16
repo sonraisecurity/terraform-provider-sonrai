@@ -35,6 +35,17 @@ locals {
       }
     }
   ]...)
+
+  # Same shape for regions, keyed "region_id@account_id".
+  region_controls = merge([
+    for account_id, regions in var.region_controls : {
+      for region_id, state in regions : "${region_id}@${account_id}" => {
+        resource_id = account_id
+        region_id   = region_id
+        state       = state
+      }
+    }
+  ]...)
 }
 
 # Which account the template deploys into: the delegated admin account where
@@ -74,6 +85,25 @@ resource "sonrai_exempted_identity" "this" {
   exempt_from = each.value.exempt_from
 }
 
+resource "sonrai_region_control" "this" {
+  for_each = local.region_controls
+
+  root_scope  = var.root_scope
+  resource_id = each.value.resource_id
+  region_id   = each.value.region_id
+  state       = each.value.state
+}
+
+# Authoritative for each scope named: whatever the scope already has is
+# replaced by what is declared here, including enrolments made in the console.
+resource "sonrai_jit_configuration" "this" {
+  for_each = var.jit_configurations
+
+  scope                 = each.key
+  deny_first            = each.value.deny_first
+  enrolled_entitlements = each.value.enrolled_entitlements
+}
+
 resource "sonrai_control_submission" "firewall" {
   count = local.deployed ? 1 : 0
 
@@ -83,6 +113,13 @@ resource "sonrai_control_submission" "firewall" {
     { for name, r in sonrai_account_disabled_service.this : "disabled_${name}" => r.id },
     { for name, r in sonrai_account_protected_service.this : "protected_${name}" => r.id },
     { for name, r in sonrai_exempted_identity.this : "exempt_${name}" => join("|", sort(r.exempt_from)) },
+    { for name, r in sonrai_region_control.this : "region_${name}" => r.state },
+    {
+      for scope, r in sonrai_jit_configuration.this : "jit_${scope}" => sha256(jsonencode({
+        deny_first   = r.deny_first
+        entitlements = sort([for e in r.enrolled_entitlements : "${e.type}:${e.name}:${e.auto_pod}"])
+      }))
+    },
   )
 
   # Checked before anything is submitted. Getting this wrong leaves a live
@@ -109,8 +146,11 @@ resource "sonrai_control_submission" "firewall" {
 resource "aws_cloudformation_stack" "firewall" {
   count = local.deployed ? 1 : 0
 
-  name         = var.stack_name
-  template_url = sonrai_control_submission.firewall[0].template_location
+  name = var.stack_name
+  # The new template, or the one already deployed when this submission changed
+  # nothing deployable (JIT, for one). Never empty once a template exists, which
+  # keeps the stack from being handed a null template_url.
+  template_url = sonrai_control_submission.firewall[0].stack_template_location
   capabilities = ["CAPABILITY_NAMED_IAM"]
 
   # This stack is the firewall's whole IAM footprint, not just the controls in

@@ -22,9 +22,10 @@ import (
 )
 
 var (
-	_ resource.Resource                = (*jitConfigurationResource)(nil)
-	_ resource.ResourceWithConfigure   = (*jitConfigurationResource)(nil)
-	_ resource.ResourceWithImportState = (*jitConfigurationResource)(nil)
+	_ resource.Resource                 = (*jitConfigurationResource)(nil)
+	_ resource.ResourceWithConfigure    = (*jitConfigurationResource)(nil)
+	_ resource.ResourceWithImportState  = (*jitConfigurationResource)(nil)
+	_ resource.ResourceWithUpgradeState = (*jitConfigurationResource)(nil)
 )
 
 type jitConfigurationResource struct {
@@ -38,15 +39,14 @@ type jitConfigurationModel struct {
 	ID           types.String `tfsdk:"id"`
 	Scope        types.String `tfsdk:"scope"`
 	DenyFirst    types.Bool   `tfsdk:"deny_first"`
-	AutoPod      types.Bool   `tfsdk:"auto_pod"`
 	Entitlements types.Set    `tfsdk:"enrolled_entitlements"`
 	Pending      types.Bool   `tfsdk:"pending"`
 }
 
 type jitEntitlementModel struct {
-	Name       types.String `tfsdk:"name"`
-	Type       types.String `tfsdk:"type"`
-	FullAccess types.Bool   `tfsdk:"full_access"`
+	Name    types.String `tfsdk:"name"`
+	Type    types.String `tfsdk:"type"`
+	AutoPod types.Bool   `tfsdk:"auto_pod"`
 }
 
 func (r *jitConfigurationResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -55,17 +55,19 @@ func (r *jitConfigurationResource) Metadata(_ context.Context, req resource.Meta
 
 func (r *jitConfigurationResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		// Version 1 moved auto_pod from the scope onto each entitlement. See
+		// UpgradeState.
+		Version: 1,
 		MarkdownDescription: "Configures Just-in-Time access at a scope: which entitlements are " +
-			"enrolled, whether everything else is denied, and whether Permissions on Demand is " +
-			"automatic.\n\n" +
+			"enrolled, whether everything else is denied, and which entitlements have AutoPoD.\n\n" +
 			"The platform replaces the whole configuration at a scope in one call, so this resource " +
 			"is authoritative for the scope it names. An entitlement enrolled from the console and " +
 			"left out of `enrolled_entitlements` is unenrolled on the next apply.\n\n" +
 			"Enrolments inherited from an ancestor scope are reported by the platform but are not " +
 			"managed here. Declare them on the ancestor's own resource.\n\n" +
 			"Declaring this resource replaces whatever the scope already has: enrolments absent " +
-			"from `enrolled_entitlements` are unenrolled, and `deny_first` and `auto_pod` take the " +
-			"values declared here.\n\n" +
+			"from `enrolled_entitlements` are unenrolled, and `deny_first` takes the value " +
+			"declared here.\n\n" +
 			"AWS only for now.\n\n" +
 			"Creating this resource *stages* the change. It takes effect only once the pending " +
 			"changes for the containing root scope are submitted and deployed.",
@@ -90,13 +92,6 @@ func (r *jitConfigurationResource) Schema(_ context.Context, _ resource.SchemaRe
 			},
 			"deny_first": schema.BoolAttribute{
 				MarkdownDescription: "Deny every entitlement that is not enrolled at this scope. " +
-					"Defaults to false.",
-				Optional: true,
-				Computed: true,
-				Default:  booldefault.StaticBool(false),
-			},
-			"auto_pod": schema.BoolAttribute{
-				MarkdownDescription: "Approve Permissions on Demand requests automatically. " +
 					"Defaults to false.",
 				Optional: true,
 				Computed: true,
@@ -132,10 +127,11 @@ func (r *jitConfigurationResource) Schema(_ context.Context, _ resource.SchemaRe
 								stringvalidator.OneOf(client.EntitlementTypes...),
 							},
 						},
-						"full_access": schema.BoolAttribute{
-							MarkdownDescription: "Whether a session through this entitlement is exempt " +
-								"from every Protected control. Without it, a session still needs " +
-								"Permissions on Demand approval for protected actions. Defaults to false.",
+						"auto_pod": schema.BoolAttribute{
+							MarkdownDescription: "AutoPoD: a session through this entitlement is " +
+								"approved for protected actions without a Permissions on Demand " +
+								"request. Without it, protected actions still need one. Defaults to " +
+								"false.",
 							Optional: true,
 							Computed: true,
 							Default:  booldefault.StaticBool(false),
@@ -204,7 +200,6 @@ func (r *jitConfigurationResource) Read(ctx context.Context, req resource.ReadRe
 
 	state.ID = types.StringValue(scope)
 	state.DenyFirst = types.BoolValue(cfg.DenyFirst)
-	state.AutoPod = types.BoolValue(cfg.AutoPod)
 	state.Entitlements = entitlements
 	state.Pending = types.BoolValue(cfg.Pending)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -248,7 +243,7 @@ func (r *jitConfigurationResource) Delete(ctx context.Context, req resource.Dele
 	// JIT rows. Clearing it is a write of the empty configuration. Where the
 	// change was staged and never deployed this cancels the staged row rather
 	// than stacking a second one.
-	if _, err := r.api.SetJitConfiguration(ctx, scope, false, false, nil); err != nil {
+	if _, err := r.api.SetJitConfiguration(ctx, scope, false, nil); err != nil {
 		resp.Diagnostics.Append(diagnoseAPIError("Unable to clear JIT configuration", err)...)
 		return
 	}
@@ -303,7 +298,7 @@ func (r *jitConfigurationResource) apply(ctx context.Context, m *jitConfiguratio
 		}
 	}
 
-	change, err := r.api.SetJitConfiguration(ctx, scope, denyFirst, m.AutoPod.ValueBool(), entitlements)
+	change, err := r.api.SetJitConfiguration(ctx, scope, denyFirst, entitlements)
 	if err != nil {
 		diags.Append(diagnoseAPIError("Unable to set JIT configuration", err)...)
 		return false, diags
@@ -326,4 +321,91 @@ func (r *jitConfigurationResource) apply(ctx context.Context, m *jitConfiguratio
 	}
 	m.Pending = types.BoolValue(cfg.Pending)
 	return true, diags
+}
+
+// jitConfigurationModelV0 is the state layout of schema version 0, which had a
+// scope-level auto_pod and full_access on each entitlement.
+type jitConfigurationModelV0 struct {
+	ID           types.String `tfsdk:"id"`
+	Scope        types.String `tfsdk:"scope"`
+	DenyFirst    types.Bool   `tfsdk:"deny_first"`
+	AutoPod      types.Bool   `tfsdk:"auto_pod"`
+	Entitlements types.Set    `tfsdk:"enrolled_entitlements"`
+	Pending      types.Bool   `tfsdk:"pending"`
+}
+
+type jitEntitlementModelV0 struct {
+	Name       types.String `tfsdk:"name"`
+	Type       types.String `tfsdk:"type"`
+	FullAccess types.Bool   `tfsdk:"full_access"`
+}
+
+// UpgradeState carries version 0 state forward.
+//
+// full_access is what the console calls AutoPoD, so it becomes the
+// entitlement's auto_pod. The scope-level auto_pod is dropped: the platform
+// discards it for AWS scopes, so it never described anything deployed.
+func (r *jitConfigurationResource) UpgradeState(_ context.Context) map[int64]resource.StateUpgrader {
+	return map[int64]resource.StateUpgrader{
+		0: {
+			PriorSchema: &schema.Schema{
+				Attributes: map[string]schema.Attribute{
+					"id":         schema.StringAttribute{Computed: true},
+					"scope":      schema.StringAttribute{Required: true},
+					"deny_first": schema.BoolAttribute{Optional: true, Computed: true},
+					"auto_pod":   schema.BoolAttribute{Optional: true, Computed: true},
+					"enrolled_entitlements": schema.SetNestedAttribute{
+						Optional: true,
+						Computed: true,
+						NestedObject: schema.NestedAttributeObject{
+							Attributes: map[string]schema.Attribute{
+								"name":        schema.StringAttribute{Required: true},
+								"type":        schema.StringAttribute{Optional: true, Computed: true},
+								"full_access": schema.BoolAttribute{Optional: true, Computed: true},
+							},
+						},
+					},
+					"pending": schema.BoolAttribute{Computed: true},
+				},
+			},
+			StateUpgrader: upgradeJitConfigurationV0,
+		},
+	}
+}
+
+func upgradeJitConfigurationV0(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
+	var prior jitConfigurationModelV0
+	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	entitlements := []client.JitEntitlement{}
+	if !prior.Entitlements.IsNull() && !prior.Entitlements.IsUnknown() {
+		var models []jitEntitlementModelV0
+		resp.Diagnostics.Append(prior.Entitlements.ElementsAs(ctx, &models, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		for _, m := range models {
+			entitlements = append(entitlements, client.JitEntitlement{
+				Name:       m.Name.ValueString(),
+				Type:       m.Type.ValueString(),
+				FullAccess: m.FullAccess.ValueBool(),
+			})
+		}
+	}
+	set, diags := entitlementsToSet(ctx, entitlements)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, jitConfigurationModel{
+		ID:           prior.ID,
+		Scope:        prior.Scope,
+		DenyFirst:    prior.DenyFirst,
+		Entitlements: set,
+		Pending:      prior.Pending,
+	})...)
 }

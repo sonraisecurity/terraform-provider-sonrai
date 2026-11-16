@@ -11,8 +11,7 @@ working configuration; this is the detail behind it.
 
 Everything here is a resource or a data source. The provider declares no
 Terraform actions, which OpenTofu does not implement, so both tools get the
-same thing. Nor does any documented workflow need `-target` or `-replace`:
-those are for digging out of a bad state, not for routine operation.
+same thing.
 
 ## Provider configuration
 
@@ -83,7 +82,7 @@ one or the other, not a mix, or resource addresses will not line up.
 ```hcl
 terraform {
   required_providers {
-    sonrai = { source = "sonraisecurity/sonrai" }
+    sonrai = { source = "sonraisecurity/sonrai", version = "~> 0.1" }
     aws    = { source = "hashicorp/aws", version = "~> 5.67" }
   }
 }
@@ -219,7 +218,7 @@ resource "sonrai_control_submission" "firewall" {
 
 resource "aws_cloudformation_stack" "firewall" {
   name         = "SonraiCloudPermissionFirewall"
-  template_url = sonrai_control_submission.firewall.template_location
+  template_url = sonrai_control_submission.firewall.stack_template_location
   capabilities = ["CAPABILITY_NAMED_IAM"]
 
   lifecycle {
@@ -247,7 +246,8 @@ submission.
 
 This walkthrough assumes the firewall has not been deployed under the root
 scope before. A control that is already applied — from the console or another
-configuration — is rejected rather than taken over.
+configuration — is rejected rather than taken over. To manage one, import it:
+see [Importing an existing deployment](#importing-an-existing-deployment).
 
 ### Confirm
 
@@ -430,6 +430,96 @@ Leaving `reset = false` in `terraform.tfvars` is safe. Arming it again takes
 both variables and a `main.tf` edit, and the plan names the stack it will
 destroy before you approve any of it.
 
+### Importing an existing deployment
+
+A firewall already configured in the console can be brought under Terraform
+with `import` blocks. Each resource's import ID:
+
+| Resource | Import ID | Example |
+|---|---|---|
+| `sonrai_account_disabled_service` | `control_key@root_scope@resource_id` | `cloud9@aws/r-abcd@123456789012` |
+| `sonrai_account_protected_service` | `control_key@root_scope@resource_id` | `iam@aws/r-abcd@123456789012` |
+| `sonrai_exempted_identity` | `identity@scope`, plus `@sso` for an SSO actor id | `arn:aws:iam::*:role/BreakGlass@aws/r-abcd` |
+| `sonrai_region_control` | `region_id@root_scope@resource_id` | `ap-south-1@aws/r-abcd@123456789012` |
+| `sonrai_jit_configuration` | The scope | `aws/r-abcd/123456789012` |
+| `sonrai_control_submission` | The transaction id | `a1b2c3d4-0000-4000-8000-000000000000` |
+| `aws_cloudformation_stack` | The stack name | `SonraiCloudPermissionFirewall` |
+
+`sonrai_control_reset` cannot be imported; it records an action, not a
+setting.
+
+**Import the stack and its submission together.** The stack's `SonraiId`
+output names the transaction it is running, as `<org>:<transaction id>`.
+Import that transaction as the submission. The imported submission takes on
+the configured `triggers` without submitting, and its `stack_template_location`
+gives the stack a known `template_url`. Without it, the first apply submits
+again.
+
+With [`examples/complete`](examples/complete), which keys its resources from
+`terraform.tfvars`, `for_each` import blocks (Terraform 1.7 or later) cover
+every entry at once:
+
+```hcl
+data "aws_cloudformation_stack" "adopt" {
+  name = var.stack_name
+}
+
+locals {
+  adopt_transaction = regex(
+    "^[A-Za-z0-9-]+:([0-9a-f-]{36})$",
+    data.aws_cloudformation_stack.adopt.outputs["SonraiId"],
+  )[0]
+}
+
+import {
+  to = aws_cloudformation_stack.firewall[0]
+  id = var.stack_name
+}
+
+import {
+  to = sonrai_control_submission.firewall[0]
+  id = local.adopt_transaction
+}
+
+import {
+  for_each = local.disabled_services
+  to       = sonrai_account_disabled_service.this[each.key]
+  id       = "${each.value.control_key}@${var.root_scope}@${each.value.resource_id}"
+}
+
+import {
+  for_each = local.region_controls
+  to       = sonrai_region_control.this[each.key]
+  id       = "${each.value.region_id}@${var.root_scope}@${each.value.resource_id}"
+}
+
+import {
+  for_each = var.jit_configurations
+  to       = sonrai_jit_configuration.this[each.key]
+  id       = each.key
+}
+```
+
+Protected services and exempted identities follow the same pattern. Then:
+
+1. Fill `terraform.tfvars` with what is deployed, and set `submit = true`.
+2. Run `terraform plan`. Every import should show no changes, apart from the
+   stack's `template_url` being set and the submission's `triggers` being
+   recorded. Any other difference means the configuration does not match what
+   is deployed; fix the configuration, not the platform.
+3. Apply, then delete the import blocks. Left in place, a new entry added later
+   gets an import attempt and fails with `Cannot import non-existent remote
+   object`.
+
+Things to know about imported resources:
+
+- **Region controls** have no recorded `previous_state`, so destroying one
+  re-enables the region rather than restoring an earlier state.
+- **JIT configuration** is authoritative for its scope. List every entitlement
+  already enrolled there, or the next apply unenrols it.
+- **Protected services** read their exemptions from the platform. Declare the
+  same ones, or the next apply changes them.
+
 ## Troubleshooting
 
 **`Instance cannot be destroyed` on `aws_cloudformation_stack.firewall`.**
@@ -445,13 +535,21 @@ down on purpose, use [Reset everything at once](#reset-everything-at-once).
 
 **`no such host` for an organization that is not yours.** An `org` argument in
 the `provider` block takes precedence over `SONRAI_ORG`. Remove it — a copied
-example's `crc12345678` is the usual culprit.
+example's `crc12345678` is the usual cause.
+
+**`Provider produced inconsistent final plan` on the stack's `outputs`.** The
+stack's `template_url` was empty in state and the apply gave it a template.
+Point `template_url` at `stack_template_location`, not `template_location`:
+the latter is empty whenever a submission changes nothing deployable, such as a
+JIT change. Applying again clears the error.
+
+**`Cannot import non-existent remote object`.** An `import` block is still in
+the configuration for an entry that was never deployed. Delete the import
+blocks once the import has been applied.
 
 **`Failed to query available provider packages`.** Check that
 `required_providers` has `source = "sonraisecurity/sonrai"` and that the machine
-can reach `registry.terraform.io`. With OpenTofu, the provider is not yet listed
-in the OpenTofu Registry; install it as described in
-[Installing for OpenTofu](README.md#installing-for-opentofu).
+can reach `registry.terraform.io`, or `registry.opentofu.org` with OpenTofu.
 
 **A checksum mismatch on `sonraisecurity/sonrai`.** The lock file records a
 different build than the one being installed — usually a local build left in
@@ -487,7 +585,8 @@ between organizational units requires no configuration change.
 
 Disables one cloud service in one account, denying its sensitive permissions.
 Claims only the service it names. A service already disabled — from the
-console, or by another configuration — is rejected rather than adopted.
+console, or by another configuration — is rejected rather than adopted; import
+it to manage it.
 
 | Attribute | Type | | |
 |---|---|---|---|
@@ -509,7 +608,7 @@ resource as deleted; applying re-stages it.
 
 Protects one cloud service in one account, firewalling its sensitive
 permissions for every identity except those exempted. A service already
-protected is rejected rather than adopted.
+protected is rejected rather than adopted; import it to manage it.
 
 | Attribute | Type | | |
 |---|---|---|---|
@@ -549,7 +648,7 @@ it to the configuration to keep it.
 
 Exempts an identity from whole classes of control at a scope and everything
 beneath it. An identity already exempted at the scope is rejected rather than
-adopted. AWS only.
+adopted; import it to manage it. AWS only.
 
 | Attribute | Type | | |
 |---|---|---|---|
@@ -597,18 +696,19 @@ Configures Just-in-Time access at a scope. AWS only.
 |---|---|---|---|
 | `scope` | string | required | Scope to configure. Forces replacement. |
 | `deny_first` | bool | optional | Deny every entitlement not enrolled here. Defaults to false. |
-| `auto_pod` | bool | optional | Approve Permissions on Demand automatically. Defaults to false. |
-| `enrolled_entitlements` | set(object) | optional | `name`, `type`, `full_access`. |
+| `enrolled_entitlements` | set(object) | optional | `name`, `type`, `auto_pod`. |
 | `pending` | bool | computed | True while a staged change has not been deployed. |
 
-Declaring this resource replaces whatever the scope already has: enrolments absent from `enrolled_entitlements` are unenrolled, and
-`deny_first` and `auto_pod` take the values declared here.
+Declaring this resource replaces whatever the scope already has: enrolments
+absent from `enrolled_entitlements` are unenrolled, and `deny_first` takes the
+value declared here.
 
 Each entitlement takes a `name` — the permission set, account access role or
 SAML role as the platform names it — an optional `type` of
 `AWS_PERMISSION_SET` (the default), `AWS_ACCOUNT_ACCESS_ROLE` or
-`AWS_SAML_ROLE`, and `full_access`, which exempts a session through that
-entitlement from every Protected control.
+`AWS_SAML_ROLE`, and `auto_pod` — AutoPoD in the console — which approves
+protected actions through that entitlement without a Permissions on Demand
+request.
 
 ```hcl
 resource "sonrai_jit_configuration" "org" {
@@ -617,7 +717,7 @@ resource "sonrai_jit_configuration" "org" {
 
   enrolled_entitlements = [
     { name = "PowerUserAccess" },
-    { name = "BreakGlassAccess", type = "AWS_ACCOUNT_ACCESS_ROLE", full_access = true },
+    { name = "BreakGlassAccess", type = "AWS_ACCOUNT_ACCESS_ROLE", auto_pod = true },
   ]
 }
 ```
@@ -687,7 +787,8 @@ satisfies is rejected the same way: it would record a control this
 configuration never caused.
 
 Destroying the resource restores the state the account had before it —
-`previous_state`, recorded at create.
+`previous_state`, recorded at create. An imported control has no recorded
+state, so destroying it re-enables the region.
 
 
 ### `sonrai_control_submission`
@@ -703,10 +804,14 @@ Submits every change staged under a root scope as one transaction.
 | `transaction_id` | string | computed | |
 | `status` | string | computed | Platform transaction status. Only `COMPLETED`, `FAILED` and `CANCELED` are terminal; intermediate values vary with what is being deployed. |
 | `status_message` | string | computed | |
-| `template_location` | string | computed | CloudFormation template to deploy, empty when none is required. |
+| `template_location` | string | computed | CloudFormation template this transaction produced, empty when none is required. |
+| `stack_template_location` | string | computed | Template the stack should run: `template_location`, or the one already deployed when this transaction produced none. Use this as the stack's `template_url`. |
 
-Read the pre-signed download URL from `sonrai_control_transaction`; it is not
-stored here.
+Use `stack_template_location` as the stack's `template_url`. It never goes
+empty once a template has been deployed, so a submission that changes nothing
+deployable leaves the stack as it is. The platform's pre-signed download URL is
+deliberately not exposed, here or on `sonrai_control_transaction`: it is a
+short-lived credential and would sit in state.
 
 Reference the controls it covers in `triggers` so that changing any of them
 produces a new submission.

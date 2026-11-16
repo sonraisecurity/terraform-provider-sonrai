@@ -1,7 +1,7 @@
 # Deploy the template the submission produced.
 resource "aws_cloudformation_stack" "firewall_controls" {
   name         = "SonraiCloudPermissionFirewall"
-  template_url = sonrai_control_submission.firewall.template_location
+  template_url = sonrai_control_submission.firewall.stack_template_location
   capabilities = ["CAPABILITY_NAMED_IAM"]
 }
 
