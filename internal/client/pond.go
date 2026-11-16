@@ -20,6 +20,13 @@ query pondRequests($scope: String!) {
   }
 }`
 
+type pondRequest struct {
+	ControlID string `json:"controlId"`
+	Identity  string `json:"identity"`
+	IsSSO     bool   `json:"isSSO"`
+	RevokeAt  int64  `json:"revokeAt"`
+}
+
 // TimeboxedExemptions is the set of identities whose exemption from one
 // control came from a Permissions on Demand grant that expires.
 type TimeboxedExemptions struct {
@@ -44,23 +51,26 @@ func (t *TimeboxedExemptions) Has() bool {
 // revokeAt is zero for a permanent grant. The API offers no filter for it, so
 // the requests are narrowed by scope and status and sifted here.
 func (c *Client) TimeboxedExemptions(ctx context.Context, scope, controlID string) (*TimeboxedExemptions, error) {
-	var out struct {
-		PONDRequests struct {
-			Items []struct {
-				ControlID string `json:"controlId"`
-				Identity  string `json:"identity"`
-				IsSSO     bool   `json:"isSSO"`
-				RevokeAt  int64  `json:"revokeAt"`
-			} `json:"items"`
-		} `json:"PONDRequests"`
-	}
-	if err := c.Execute(ctx, pondRequestsQuery, map[string]any{"scope": scope}, &out); err != nil {
+	// The query is per scope, not per control, so every protected service in
+	// an account shares one answer. It is only read here, never modified.
+	cached, err := c.cache.get(ctx, cacheKey("pond", scope), func(ctx context.Context) (any, error) {
+		var out struct {
+			PONDRequests struct {
+				Items []pondRequest `json:"items"`
+			} `json:"PONDRequests"`
+		}
+		if err := c.Execute(ctx, pondRequestsQuery, map[string]any{"scope": scope}, &out); err != nil {
+			return nil, err
+		}
+		return out.PONDRequests.Items, nil
+	})
+	if err != nil {
 		return nil, err
 	}
 
 	identities := stringSet{}
 	ssoActors := stringSet{}
-	for _, item := range out.PONDRequests.Items {
+	for _, item := range cached.([]pondRequest) {
 		if item.RevokeAt <= 0 || item.Identity == "" {
 			continue
 		}

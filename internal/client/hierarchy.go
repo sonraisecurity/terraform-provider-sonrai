@@ -115,20 +115,31 @@ query cloudHierarchy($rootScope: String!, $resourceIds: [String!]) {
 // entryType narrows the search when an id could name more than one kind of
 // thing. Leave it empty to match any.
 func (c *Client) ResolveScope(ctx context.Context, rootScope, resourceID, entryType string) (*HierarchyEntry, error) {
-	var out struct {
-		CloudHierarchyList struct {
-			Items []HierarchyEntry `json:"items"`
-		} `json:"CloudHierarchyList"`
-	}
-	vars := map[string]any{
-		"rootScope":   rootScope,
-		"resourceIds": CandidateResourceIDs(rootScope, resourceID),
-	}
-	if err := c.Execute(ctx, hierarchyQuery, vars, &out); err != nil {
+	// Every control in an account resolves the same id, so the answer is
+	// shared. entryType is applied below, to a copy, so it is not part of
+	// the key.
+	cached, err := c.cache.get(ctx, cacheKey("hierarchy", rootScope, resourceID), func(ctx context.Context) (any, error) {
+		var out struct {
+			CloudHierarchyList struct {
+				Items []HierarchyEntry `json:"items"`
+			} `json:"CloudHierarchyList"`
+		}
+		vars := map[string]any{
+			"rootScope":   rootScope,
+			"resourceIds": CandidateResourceIDs(rootScope, resourceID),
+		}
+		if err := c.Execute(ctx, hierarchyQuery, vars, &out); err != nil {
+			return nil, err
+		}
+		return out.CloudHierarchyList.Items, nil
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	items := out.CloudHierarchyList.Items
+	// Copied, because the filter below reuses the backing array and the
+	// cached slice is shared with every other caller.
+	items := append([]HierarchyEntry(nil), cached.([]HierarchyEntry)...)
 	if entryType != "" {
 		filtered := items[:0]
 		for _, item := range items {
