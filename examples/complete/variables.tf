@@ -41,6 +41,47 @@ variable "exempted_identities" {
   default = {}
 }
 
+variable "region_controls" {
+  description = "Regions to control: cloud-native account id => region id => \"disabled\", or \"enabled\" to override an ancestor that disabled it."
+  type        = map(map(string))
+  default     = {}
+
+  validation {
+    condition = alltrue(flatten([
+      for account_id, regions in var.region_controls : [
+        for region_id, state in regions :
+        can(regex("^[0-9]{12}$", account_id)) &&
+        can(regex("^[a-z]{2}(-[a-z]+)+-[0-9]+$", region_id)) &&
+        contains(["disabled", "enabled"], state)
+      ]
+    ]))
+    error_message = "Each region_controls entry needs a 12-digit AWS account id, a region id such as \"ap-south-1\", and a state of \"disabled\" or \"enabled\"."
+  }
+}
+
+variable "jit_configurations" {
+  description = "Just-in-Time configuration, keyed by the scope it applies to. Each entry replaces whatever that scope already has."
+  type = map(object({
+    deny_first = optional(bool, false)
+    enrolled_entitlements = optional(set(object({
+      name     = string
+      type     = optional(string, "AWS_PERMISSION_SET")
+      auto_pod = optional(bool, false)
+    })), [])
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue(flatten([
+      for scope, c in var.jit_configurations : concat(
+        [can(regex("^aws/r-[a-z0-9]+(/[A-Za-z0-9-]+)*$", scope))],
+        [for e in c.enrolled_entitlements : contains(["AWS_PERMISSION_SET", "AWS_ACCOUNT_ACCESS_ROLE", "AWS_SAML_ROLE"], e.type)]
+      )
+    ]))
+    error_message = "Each jit_configurations key must be a scope path such as \"aws/r-abcd/123456789012\", and each entitlement type one of AWS_PERMISSION_SET, AWS_ACCOUNT_ACCESS_ROLE or AWS_SAML_ROLE."
+  }
+}
+
 variable "submit" {
   description = "Submit staged changes and deploy the resulting template."
   type        = bool

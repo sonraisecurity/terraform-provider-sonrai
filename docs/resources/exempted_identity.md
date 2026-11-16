@@ -72,3 +72,30 @@ resource "sonrai_exempted_identity" "deploy_robot" {
 
 - `id` (String) Identifier of the form `identity@scope`.
 - `pending` (Boolean) True while this exemption has a staged change that has not been submitted and deployed.
+
+## Import
+
+Import is supported using the following syntax:
+
+In Terraform v1.5.0 and later, the [`import` block](https://developer.hashicorp.com/terraform/language/import) can be used with the `id` attribute, for example:
+
+```terraform
+# Import ID: identity@scope, with @sso appended for an SSO actor id.
+import {
+  to = sonrai_exempted_identity.break_glass
+  id = "arn:aws:iam::*:role/BreakGlass@aws/r-abcd"
+}
+
+import {
+  to = sonrai_exempted_identity.sso_operator
+  id = "breakglass@example.com@aws/r-abcd@sso"
+}
+```
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+# Import ID: identity@scope, with @sso appended for an SSO actor id.
+terraform import sonrai_exempted_identity.break_glass 'arn:aws:iam::*:role/BreakGlass@aws/r-abcd'
+terraform import sonrai_exempted_identity.sso_operator 'breakglass@example.com@aws/r-abcd@sso'
+```

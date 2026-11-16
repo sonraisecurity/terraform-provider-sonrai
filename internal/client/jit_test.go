@@ -87,8 +87,8 @@ func TestJitConfigurationPendingFromAnyPart(t *testing.T) {
 	if !cfg.Pending {
 		t.Error("Pending = false, want true: Breakglass is PENDING_ENROLLMENT")
 	}
-	if !cfg.DenyFirst || !cfg.AutoPod {
-		t.Errorf("DenyFirst = %v, AutoPod = %v, want both true", cfg.DenyFirst, cfg.AutoPod)
+	if !cfg.DenyFirst {
+		t.Error("DenyFirst = false, want true")
 	}
 }
 
@@ -124,7 +124,7 @@ func TestSetJitConfigurationSendsNameAsID(t *testing.T) {
 	var captured map[string]any
 	c := jitClient(t, `{"data":{"SetJitConfiguration":{"success":true}}}`, &captured)
 
-	_, err := c.SetJitConfiguration(context.Background(), "aws/r-abcd", true, false, []JitEntitlement{
+	_, err := c.SetJitConfiguration(context.Background(), "aws/r-abcd", true, []JitEntitlement{
 		{Name: "PowerUserAccess", Type: EntitlementPermissionSet},
 		{Name: "LegacyRow", Type: entitlementTypeUnset},
 		{Name: "Breakglass", Type: EntitlementAccountAccessRole, FullAccess: true},
@@ -160,6 +160,11 @@ func TestSetJitConfigurationSendsNameAsID(t *testing.T) {
 	if input["isDenyFirst"] != true {
 		t.Error("isDenyFirst should be true")
 	}
+	// The platform discards scope-level autoPod for AWS; sending it would
+	// claim a setting that never takes.
+	if _, present := input["autoPod"]; present {
+		t.Error("scope-level autoPod must not be sent; AutoPoD on AWS is isFullAccess per entitlement")
+	}
 }
 
 // TestSetJitConfigurationClearsWithEmptyList: there is no delete mutation, so
@@ -169,7 +174,7 @@ func TestSetJitConfigurationClearsWithEmptyList(t *testing.T) {
 	var captured map[string]any
 	c := jitClient(t, `{"data":{"SetJitConfiguration":{"success":true}}}`, &captured)
 
-	if _, err := c.SetJitConfiguration(context.Background(), "aws/r-abcd", false, false, nil); err != nil {
+	if _, err := c.SetJitConfiguration(context.Background(), "aws/r-abcd", false, nil); err != nil {
 		t.Fatalf("SetJitConfiguration: %v", err)
 	}
 
@@ -185,7 +190,7 @@ func TestSetJitConfigurationClearsWithEmptyList(t *testing.T) {
 
 func TestSetJitConfigurationRejectsEmptyName(t *testing.T) {
 	c := jitClient(t, `{"data":{"SetJitConfiguration":{"success":true}}}`, nil)
-	_, err := c.SetJitConfiguration(context.Background(), "aws/r-abcd", false, false,
+	_, err := c.SetJitConfiguration(context.Background(), "aws/r-abcd", false,
 		[]JitEntitlement{{Name: ""}})
 	if err == nil {
 		t.Error("expected an error for an empty entitlement name")
@@ -194,7 +199,7 @@ func TestSetJitConfigurationRejectsEmptyName(t *testing.T) {
 
 func TestSetJitConfigurationFailureIsAnError(t *testing.T) {
 	c := jitClient(t, `{"data":{"SetJitConfiguration":{"success":false}}}`, nil)
-	if _, err := c.SetJitConfiguration(context.Background(), "aws/r-abcd", false, false, nil); err == nil {
+	if _, err := c.SetJitConfiguration(context.Background(), "aws/r-abcd", false, nil); err == nil {
 		t.Error("success:false must be reported as an error")
 	}
 }

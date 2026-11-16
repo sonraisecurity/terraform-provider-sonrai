@@ -3,23 +3,23 @@
 page_title: "sonrai_jit_configuration Resource - sonrai"
 subcategory: ""
 description: |-
-  Configures Just-in-Time access at a scope: which entitlements are enrolled, whether everything else is denied, and whether Permissions on Demand is automatic.
+  Configures Just-in-Time access at a scope: which entitlements are enrolled, whether everything else is denied, and which entitlements have AutoPoD.
   The platform replaces the whole configuration at a scope in one call, so this resource is authoritative for the scope it names. An entitlement enrolled from the console and left out of enrolled_entitlements is unenrolled on the next apply.
   Enrolments inherited from an ancestor scope are reported by the platform but are not managed here. Declare them on the ancestor's own resource.
-  Declaring this resource replaces whatever the scope already has: enrolments absent from enrolled_entitlements are unenrolled, and deny_first and auto_pod take the values declared here.
+  Declaring this resource replaces whatever the scope already has: enrolments absent from enrolled_entitlements are unenrolled, and deny_first takes the value declared here.
   AWS only for now.
   Creating this resource stages the change. It takes effect only once the pending changes for the containing root scope are submitted and deployed.
 ---
 
 # sonrai_jit_configuration (Resource)
 
-Configures Just-in-Time access at a scope: which entitlements are enrolled, whether everything else is denied, and whether Permissions on Demand is automatic.
+Configures Just-in-Time access at a scope: which entitlements are enrolled, whether everything else is denied, and which entitlements have AutoPoD.
 
 The platform replaces the whole configuration at a scope in one call, so this resource is authoritative for the scope it names. An entitlement enrolled from the console and left out of `enrolled_entitlements` is unenrolled on the next apply.
 
 Enrolments inherited from an ancestor scope are reported by the platform but are not managed here. Declare them on the ancestor's own resource.
 
-Declaring this resource replaces whatever the scope already has: enrolments absent from `enrolled_entitlements` are unenrolled, and `deny_first` and `auto_pod` take the values declared here.
+Declaring this resource replaces whatever the scope already has: enrolments absent from `enrolled_entitlements` are unenrolled, and `deny_first` takes the value declared here.
 
 AWS only for now.
 
@@ -39,22 +39,23 @@ resource "sonrai_jit_configuration" "org" {
       name = "PowerUserAccess"
     },
     {
-      name        = "BreakGlassAccess"
-      type        = "AWS_ACCOUNT_ACCESS_ROLE"
-      full_access = true
+      name     = "BreakGlassAccess"
+      type     = "AWS_ACCOUNT_ACCESS_ROLE"
+      auto_pod = true
     },
   ]
 }
 
-# A single account, enrolled without deny-first and approving Permissions on
-# Demand automatically.
+# A single account, enrolled without deny-first, with AutoPoD on its one
+# entitlement: protected actions through it need no Permissions on Demand
+# request.
 resource "sonrai_jit_configuration" "sandbox" {
-  scope    = "aws/r-abcd/123456789012"
-  auto_pod = true
+  scope = "aws/r-abcd/123456789012"
 
   enrolled_entitlements = [
     {
-      name = "DeveloperAccess"
+      name     = "DeveloperAccess"
+      auto_pod = true
     },
   ]
 }
@@ -69,7 +70,6 @@ resource "sonrai_jit_configuration" "sandbox" {
 
 ### Optional
 
-- `auto_pod` (Boolean) Approve Permissions on Demand requests automatically. Defaults to false.
 - `deny_first` (Boolean) Deny every entitlement that is not enrolled at this scope. Defaults to false.
 - `enrolled_entitlements` (Attributes Set) Entitlements enrolled for JIT at this scope. Anything not listed is not enrolled here. Omitting the attribute means "enrol nothing". (see [below for nested schema](#nestedatt--enrolled_entitlements))
 
@@ -87,5 +87,27 @@ Required:
 
 Optional:
 
-- `full_access` (Boolean) Whether a session through this entitlement is exempt from every Protected control. Without it, a session still needs Permissions on Demand approval for protected actions. Defaults to false.
+- `auto_pod` (Boolean) AutoPoD: a session through this entitlement is approved for protected actions without a Permissions on Demand request. Without it, protected actions still need one. Defaults to false.
 - `type` (String) `AWS_PERMISSION_SET` (an Identity Center permission set), `AWS_ACCOUNT_ACCESS_ROLE` or `AWS_SAML_ROLE`. Defaults to `AWS_PERMISSION_SET`.
+
+## Import
+
+Import is supported using the following syntax:
+
+In Terraform v1.5.0 and later, the [`import` block](https://developer.hashicorp.com/terraform/language/import) can be used with the `id` attribute, for example:
+
+```terraform
+# Import ID: the scope. The resource is authoritative for that scope, so list
+# every entitlement already enrolled there or the next apply unenrols it.
+import {
+  to = sonrai_jit_configuration.sandbox
+  id = "aws/r-abcd/123456789012"
+}
+```
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+# Import ID: the scope.
+terraform import sonrai_jit_configuration.sandbox 'aws/r-abcd/123456789012'
+```

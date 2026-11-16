@@ -27,6 +27,26 @@ disabled_services = {
   "210987654321" = ["healthlake"]
 }
 
+# Regions, per account: "disabled" stops the firewall operating there, and
+# "enabled" overrides an ancestor that disabled it. Critical regions cannot be
+# disabled, and destroying an entry restores the state the account had before.
+region_controls = {
+  "123456789012" = { "ap-south-1" = "disabled", "ap-southeast-3" = "disabled" }
+}
+
+# Just-in-Time access, keyed by scope. Each entry is authoritative: it replaces
+# whatever the scope already has, so anything enrolled in the console and not
+# listed here is unenrolled on apply.
+jit_configurations = {
+  "aws/r-abcd/123456789012" = {
+    deny_first = true
+    enrolled_entitlements = [
+      { name = "PowerUserAccess" },
+      { name = "BreakGlassAccess", type = "AWS_ACCOUNT_ACCESS_ROLE", auto_pod = true },
+    ]
+  }
+}
+
 # Exemptions from whole classes of control, rather than from one service.
 # Identities are matched as patterns, so one entry covers every account under
 # the scope.

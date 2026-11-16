@@ -27,6 +27,23 @@ output "exempted" {
   }
 }
 
+output "regions" {
+  value = {
+    for name, r in sonrai_region_control.this : name => {
+      scope = r.scope, status = r.status, previous_state = r.previous_state
+    }
+  }
+}
+
+output "jit" {
+  value = {
+    for scope, r in sonrai_jit_configuration.this : scope => {
+      deny_first = r.deny_first
+      auto_pod   = sort([for e in r.enrolled_entitlements : e.name if e.auto_pod])
+    }
+  }
+}
+
 output "rollout" {
   value = local.deployed ? {
     transaction_id = one(sonrai_control_submission.firewall[*].transaction_id)

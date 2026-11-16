@@ -47,6 +47,7 @@ type controlSubmissionModel struct {
 	Status           types.String `tfsdk:"status"`
 	StatusMessage    types.String `tfsdk:"status_message"`
 	TemplateLocation types.String `tfsdk:"template_location"`
+	StackTemplate    types.String `tfsdk:"stack_template_location"`
 }
 
 func (r *controlSubmissionResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -61,7 +62,7 @@ func (r *controlSubmissionResource) Schema(_ context.Context, _ resource.SchemaR
 			"console. Use one per root scope, and do not run concurrent applies against the same root " +
 			"scope.\n\n" +
 			"When the submitted changes require it, the transaction produces a CloudFormation template. " +
-			"Deploy it with `aws_cloudformation_stack` using `template_location`, or from the console.",
+			"Deploy it with `aws_cloudformation_stack` using `stack_template_location`, or from the console.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "Transaction id of this submission.",
@@ -86,7 +87,11 @@ func (r *controlSubmissionResource) Schema(_ context.Context, _ resource.SchemaR
 				ElementType: types.StringType,
 				Optional:    true,
 				PlanModifiers: []planmodifier.Map{
-					mapplanmodifier.RequiresReplace(),
+					mapplanmodifier.RequiresReplaceIf(triggersRequireReplace,
+						"A change submits again, except right after an import, when the configured "+
+							"triggers are adopted without submitting.",
+						"A change submits again, except right after an import, when the configured "+
+							"triggers are adopted without submitting."),
 				},
 			},
 			"wait": schema.BoolAttribute{
@@ -111,16 +116,31 @@ func (r *controlSubmissionResource) Schema(_ context.Context, _ resource.SchemaR
 			"transaction_id": schema.StringAttribute{
 				MarkdownDescription: "Transaction id returned by the platform.",
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					// Update copies this from state, so it is known in any
+					// plan that updates rather than replaces.
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"status": schema.StringAttribute{
 				MarkdownDescription: "Transaction status reported by the platform. Only " +
 					"`COMPLETED`, `FAILED` and `CANCELED` are terminal; the values seen on the way " +
 					"vary with what is being deployed.",
 				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					// Update copies this from state, so it is known in any
+					// plan that updates rather than replaces.
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"status_message": schema.StringAttribute{
 				MarkdownDescription: "Human-readable detail accompanying the status.",
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					// Update copies this from state, so it is known in any
+					// plan that updates rather than replaces.
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			// The platform's pre-signed template URL is deliberately absent,
 			// here and on the sonrai_control_transaction data source: it is
@@ -131,6 +151,26 @@ func (r *controlSubmissionResource) Schema(_ context.Context, _ resource.SchemaR
 				MarkdownDescription: "CloudFormation template this transaction produced. Empty when the " +
 					"submitted changes do not alter the template, in which case there is nothing to deploy.",
 				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					// Update copies this from state, so it is known in any
+					// plan that updates rather than replaces.
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"stack_template_location": schema.StringAttribute{
+				MarkdownDescription: "The template the firewall stack should run once this submission " +
+					"is deployed: `template_location` when this transaction produced one, and otherwise " +
+					"the template of the most recent completed transaction under the root scope that " +
+					"did, which is the one already deployed. Empty only when no recent transaction " +
+					"produced a template. Use this, not `template_location`, as the stack's " +
+					"`template_url`: a submission that changes nothing deployable then leaves the stack " +
+					"as it is.",
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					// Update copies this from state, so it is known in any
+					// plan that updates rather than replaces.
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 		},
 	}
@@ -163,11 +203,13 @@ func (r *controlSubmissionResource) Create(ctx context.Context, req resource.Cre
 
 	transaction, waitDiags := r.settle(ctx, transactionID, plan.Wait.ValueBool(), plan.WaitTimeout.ValueString())
 	applyTransaction(&plan, transaction)
+	stackDiags := r.resolveStackTemplate(ctx, &plan)
 
 	// State is saved even when waiting failed: the submission happened, and
 	// dropping it would leave a live transaction Terraform has no record of.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 	resp.Diagnostics.Append(waitDiags...)
+	resp.Diagnostics.Append(stackDiags...)
 }
 
 func (r *controlSubmissionResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -207,14 +249,19 @@ func (r *controlSubmissionResource) Read(ctx context.Context, req resource.ReadR
 	}
 
 	applyTransaction(&state, transaction)
+	resp.Diagnostics.Append(r.resolveStackTemplate(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *controlSubmissionResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	// root_scope and triggers force replacement. Only wait and wait_timeout can
-	// reach here, and neither describes anything on the server: a transaction
-	// that has already been submitted is not resubmitted because the timeout
-	// changed.
+	// root_scope and triggers force replacement, except for the first plan
+	// after an import, which adopts the configured triggers here. Nothing that
+	// reaches this describes anything on the server: a transaction that has
+	// already been submitted is not resubmitted because the timeout changed or
+	// because its triggers were recorded.
 	var plan, state controlSubmissionModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -227,8 +274,11 @@ func (r *controlSubmissionResource) Update(ctx context.Context, req resource.Upd
 	plan.Status = state.Status
 	plan.StatusMessage = state.StatusMessage
 	plan.TemplateLocation = state.TemplateLocation
+	plan.StackTemplate = state.StackTemplate
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	// Triggers are recorded now, so from here on a change to them submits.
+	resp.Diagnostics.Append(resp.Private.SetKey(ctx, privateImportedKey, nil)...)
 }
 
 func (r *controlSubmissionResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -254,6 +304,27 @@ func (r *controlSubmissionResource) ImportState(ctx context.Context, req resourc
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("transaction_id"), req.ID)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("wait"), true)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("wait_timeout"), defaultWaitTimeout)...)
+	resp.Diagnostics.Append(resp.Private.SetKey(ctx, privateImportedKey, []byte(`true`))...)
+}
+
+// privateImportedKey marks a submission that was imported and has not been
+// through an apply since. Import cannot record triggers, so without this the
+// first plan would see them change from null and submit again, before the
+// imported transaction's template_location reached the stack that deploys it.
+const privateImportedKey = "imported"
+
+// triggersRequireReplace forces a new submission when triggers change, unless
+// the submission was just imported and has no triggers recorded yet.
+func triggersRequireReplace(ctx context.Context, req planmodifier.MapRequest, resp *mapplanmodifier.RequiresReplaceIfFuncResponse) {
+	resp.RequiresReplace = true
+	if !req.StateValue.IsNull() || req.Private == nil {
+		return
+	}
+	imported, diags := req.Private.GetKey(ctx, privateImportedKey)
+	resp.Diagnostics.Append(diags...)
+	if string(imported) == "true" {
+		resp.RequiresReplace = false
+	}
 }
 
 // settle waits for the transaction when asked, and reads it once when not.
@@ -279,6 +350,28 @@ func (r *controlSubmissionResource) settle(ctx context.Context, transactionID st
 // and its changes returned to staged, in either spelling the platform uses.
 func submissionCancelled(status string) bool {
 	return client.NormalizeStatus(status) == client.StatusCancelled
+}
+
+// resolveStackTemplate sets stack_template_location from template_location,
+// falling back to the template already deployed when this transaction produced
+// none.
+//
+// Without the fallback a submission that changes nothing deployable hands the
+// stack an empty template_url. The AWS provider records that as null, and its
+// next update from null to a real url fails with "Provider produced
+// inconsistent final plan" on outputs.
+func (r *controlSubmissionResource) resolveStackTemplate(ctx context.Context, m *controlSubmissionModel) diag.Diagnostics {
+	if location := m.TemplateLocation.ValueString(); location != "" {
+		m.StackTemplate = types.StringValue(location)
+		return nil
+	}
+	location, err := r.api.DeployedTemplateLocation(ctx, m.RootScope.ValueString())
+	if err != nil {
+		m.StackTemplate = types.StringValue("")
+		return diagnoseAPIError("Unable to find the deployed template", err)
+	}
+	m.StackTemplate = types.StringValue(location)
+	return nil
 }
 
 func applyTransaction(m *controlSubmissionModel, t *client.Transaction) {
