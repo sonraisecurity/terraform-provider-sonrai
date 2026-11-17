@@ -8,7 +8,9 @@ description: |-
   This is not the same as the per-control exemptions on sonrai_account_protected_service. Those name identities exempt from one control; this exempts an identity from every control of the listed kinds.
   An identity already exempted at the scope -- from the console, or by another configuration -- is rejected rather than adopted.
   AWS only for now.
-  Identities are matched as patterns, and a pattern is the recommended form: *e/BreakGlass covers that role in every account, including accounts added later. Keep patterns short: each one is repeated across the statements of the size-limited policies the platform deploys, so *e/BreakGlass leaves far more room than arn:aws:iam::*:role/BreakGlass, which names the same role. If your role or user names contain /, a short pattern can match more than intended; spell out more, such as *role/BreakGlass. A full ARN is also accepted and matches only that identity in that one account. A pattern that names no resource, such as arn:aws:iam::, would match every ARN in the organization and is refused.
+  Identities are matched as patterns, and a pattern is the recommended form: *e/BreakGlass covers that role in every account, including accounts added later. Keep patterns short: each one is repeated across the statements of the size-limited policies the platform deploys, so *e/BreakGlass leaves far more room than arn:aws:iam::*:role/BreakGlass, which names the same role. If your role or user names contain /, a short pattern can match more than intended; spell out more, such as *role/BreakGlass.
+  Use the smallest pattern that names the identity, even for one account. scope is what limits an exemption to an account; a full ARN adds nothing but length, and is still repeated in every statement of every policy for that account.
+  A pattern that names no resource, such as arn:aws:iam::, would match every ARN in the organization and is refused.
   Patterns are accepted here only. exempt_identities on sonrai_account_protected_service requires full ARNs.
   Creating this resource stages the change. It takes effect only once the pending changes for the containing root scope are submitted and deployed.
 ---
@@ -25,7 +27,11 @@ An identity already exempted at the scope -- from the console, or by another con
 
 AWS only for now.
 
-Identities are matched as **patterns**, and a pattern is the recommended form: `*e/BreakGlass` covers that role in every account, including accounts added later. Keep patterns short: each one is repeated across the statements of the size-limited policies the platform deploys, so `*e/BreakGlass` leaves far more room than `arn:aws:iam::*:role/BreakGlass`, which names the same role. If your role or user names contain `/`, a short pattern can match more than intended; spell out more, such as `*role/BreakGlass`. A full ARN is also accepted and matches only that identity in that one account. A pattern that names no resource, such as `arn:aws:iam::`, would match every ARN in the organization and is refused.
+Identities are matched as **patterns**, and a pattern is the recommended form: `*e/BreakGlass` covers that role in every account, including accounts added later. Keep patterns short: each one is repeated across the statements of the size-limited policies the platform deploys, so `*e/BreakGlass` leaves far more room than `arn:aws:iam::*:role/BreakGlass`, which names the same role. If your role or user names contain `/`, a short pattern can match more than intended; spell out more, such as `*role/BreakGlass`.
+
+Use the smallest pattern that names the identity, even for one account. `scope` is what limits an exemption to an account; a full ARN adds nothing but length, and is still repeated in every statement of every policy for that account.
+
+A pattern that names no resource, such as `arn:aws:iam::`, would match every ARN in the organization and is refused.
 
 Patterns are accepted here only. `exempt_identities` on `sonrai_account_protected_service` requires full ARNs.
 
@@ -53,11 +59,12 @@ resource "sonrai_exempted_identity" "sso_operator" {
   exempt_from = ["service_block"]
 }
 
-# Scoped to a single account instead of the whole organization. A full ARN
-# matches only this identity in this account.
+# Scoped to a single account instead of the whole organization. The scope
+# limits it to the account, so the pattern stays as short as ever; a full ARN
+# would only add length to every policy statement for this account.
 resource "sonrai_exempted_identity" "deploy_robot" {
   scope       = "aws/r-abcd/123456789012"
-  identity    = "arn:aws:iam::123456789012:role/DeployRobot"
+  identity    = "*e/DeployRobot"
   exempt_from = ["service_protect"]
 }
 ```
@@ -68,7 +75,7 @@ resource "sonrai_exempted_identity" "deploy_robot" {
 ### Required
 
 - `exempt_from` (Set of String) Control kinds this identity is exempt from: `service_protect`, `service_block`, `quarantine`, `region_block`, `jit`, `tamper_protect`. Kinds left out are off.
-- `identity` (String) ARN pattern to exempt, such as `*e/BreakGlass`, or a full ARN to exempt one identity in one account. The SSO actor id when `sso` is true.
+- `identity` (String) Pattern to exempt, as short as will name the identity, such as `*e/BreakGlass`. The SSO actor id when `sso` is true.
 - `scope` (String) Scope to define the exemption at: a root scope such as `aws/r-abcd` for the whole organization, or a scope path beneath it. A management-account scope is rejected when the change is deployed.
 
 ### Optional

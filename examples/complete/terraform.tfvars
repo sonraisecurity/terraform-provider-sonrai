@@ -66,10 +66,10 @@ exempted_identities = {
     exempt_from = ["service_block"]
   }
 
-  # Scoped to one account, by full ARN. scope defaults to root_scope when
-  # omitted, as above.
+  # Scoped to one account. The scope does the limiting, so the pattern stays
+  # short. scope defaults to root_scope when omitted, as above.
   deploy_robot = {
-    identity    = "arn:aws:iam::123456789012:role/DeployRobot"
+    identity    = "*e/DeployRobot"
     exempt_from = ["service_protect"]
     scope       = "aws/r-abcd/123456789012"
   }

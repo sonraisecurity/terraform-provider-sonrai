@@ -305,7 +305,7 @@ Where an identity is given decides whether a pattern is allowed:
 
 | Where | Form |
 |---|---|
-| `sonrai_exempted_identity.identity` | Short pattern, **recommended**, such as `*e/BreakGlass`. A full ARN also works, for one identity in one account. |
+| `sonrai_exempted_identity.identity` | The smallest pattern that names the identity, such as `*e/BreakGlass`, even for a single account: `scope` limits it to the account. |
 | `sonrai_account_protected_service.exempt_identities` | Full ARN, including the account id. **Patterns are not supported.** |
 | `sonrai_suggested_exemptions.identities` | Always full ARNs, ready for `exempt_identities`. |
 | `exempt_sso_actor_ids`, or `identity` with `sso = true` | The SSO actor id, not an ARN. |

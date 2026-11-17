@@ -587,16 +587,28 @@ patterns:
 
 | Where | Form | Patterns |
 |---|---|---|
-| `sonrai_exempted_identity.identity` | Pattern, or a full ARN | **Yes, recommended** |
+| `sonrai_exempted_identity.identity` | Smallest pattern that names the identity | **Yes, always** |
 | `sonrai_account_protected_service.exempt_identities` | Full ARN, including the account id | **No** |
 | `sonrai_suggested_exemptions.identities` | Full ARN (output) | — |
 | `exempt_sso_actor_ids`, or `identity` with `sso = true` | SSO actor id, not an ARN | — |
 
 **Exempted identities** are matched as patterns. Prefer a pattern such as
 `*e/BreakGlass`: one entry covers the role in every account under the scope,
-including accounts added later. Use a full ARN only when you mean one identity
-in one account. A pattern that names no resource, such as `arn:aws:iam::`, is
-refused at plan time.
+including accounts added later. A pattern that names no resource, such as
+`arn:aws:iam::`, is refused at plan time.
+
+Use the smallest pattern that names the identity, even when the exemption is
+for one account. `scope` is what limits an exemption to an account. A full ARN
+adds nothing but length, and is still repeated in every statement of every
+policy for that account:
+
+```hcl
+resource "sonrai_exempted_identity" "deploy_robot" {
+  scope       = "aws/r-abcd/123456789012"
+  identity    = "*e/DeployRobot"
+  exempt_from = ["service_protect"]
+}
+```
 
 Keep patterns short. The platform writes each exemption pattern into many
 statements of the policies it deploys, and those policies have a size limit.
@@ -705,7 +717,7 @@ adopted; import it to manage it. AWS only.
 | Attribute | Type | | |
 |---|---|---|---|
 | `scope` | string | required | Scope to define the exemption at. Forces replacement. |
-| `identity` | string | required | ARN pattern (recommended) or full ARN, or SSO actor id when `sso`. Forces replacement. |
+| `identity` | string | required | Smallest pattern that names the identity, such as `*e/BreakGlass`, or SSO actor id when `sso`. Forces replacement. |
 | `sso` | bool | optional | Whether `identity` is an IAM Identity Center user. Defaults to false. Forces replacement. |
 | `exempt_from` | set(string) | required | `service_protect`, `service_block`, `quarantine`, `region_block`, `jit`, `tamper_protect`. |
 | `pending` | bool | computed | True while a staged change has not been deployed. |

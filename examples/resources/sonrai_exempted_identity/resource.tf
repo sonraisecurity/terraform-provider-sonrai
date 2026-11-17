@@ -17,10 +17,11 @@ resource "sonrai_exempted_identity" "sso_operator" {
   exempt_from = ["service_block"]
 }
 
-# Scoped to a single account instead of the whole organization. A full ARN
-# matches only this identity in this account.
+# Scoped to a single account instead of the whole organization. The scope
+# limits it to the account, so the pattern stays as short as ever; a full ARN
+# would only add length to every policy statement for this account.
 resource "sonrai_exempted_identity" "deploy_robot" {
   scope       = "aws/r-abcd/123456789012"
-  identity    = "arn:aws:iam::123456789012:role/DeployRobot"
+  identity    = "*e/DeployRobot"
   exempt_from = ["service_protect"]
 }

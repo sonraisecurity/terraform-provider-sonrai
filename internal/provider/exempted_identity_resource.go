@@ -77,9 +77,11 @@ func (r *exemptedIdentityResource) Schema(_ context.Context, _ resource.SchemaRe
 			"the size-limited policies the platform deploys, so `*e/BreakGlass` leaves far more " +
 			"room than `arn:aws:iam::*:role/BreakGlass`, which names the same role. If your role " +
 			"or user names contain `/`, a short pattern can match more than intended; spell out " +
-			"more, such as `*role/BreakGlass`. " +
-			"A full ARN is also accepted and matches only that identity in that one " +
-			"account. A pattern that names no resource, such as `arn:aws:iam::`, would match every " +
+			"more, such as `*role/BreakGlass`.\n\n" +
+			"Use the smallest pattern that names the identity, even for one account. `scope` is " +
+			"what limits an exemption to an account; a full ARN adds nothing but length, and is " +
+			"still repeated in every statement of every policy for that account.\n\n" +
+			"A pattern that names no resource, such as `arn:aws:iam::`, would match every " +
 			"ARN in the organization and is refused.\n\n" +
 			"Patterns are accepted here only. `exempt_identities` on " +
 			"`sonrai_account_protected_service` requires full ARNs.\n\n" +
@@ -106,9 +108,8 @@ func (r *exemptedIdentityResource) Schema(_ context.Context, _ resource.SchemaRe
 				},
 			},
 			"identity": schema.StringAttribute{
-				MarkdownDescription: "ARN pattern to exempt, such as " +
-					"`*e/BreakGlass`, or a full ARN to exempt one identity in one " +
-					"account. The SSO actor id when `sso` is true.",
+				MarkdownDescription: "Pattern to exempt, as short as will name the identity, such " +
+					"as `*e/BreakGlass`. The SSO actor id when `sso` is true.",
 				Required: true,
 				Validators: []validator.String{
 					stringvalidator.LengthAtLeast(1),
