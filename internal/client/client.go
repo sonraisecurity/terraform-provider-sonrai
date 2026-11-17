@@ -34,6 +34,8 @@ type Client struct {
 	// pollInterval is how often the WaitFor helpers re-read a transaction.
 	// Submissions take minutes, so polling harder only adds load.
 	pollInterval time.Duration
+	// cache memoizes reads until the first write; see readCache.
+	cache *readCache
 }
 
 // Config describes how to reach an organization's API.
@@ -43,6 +45,10 @@ type Config struct {
 	Token  string
 	// UserAgent identifies the provider build to the server; optional.
 	UserAgent string
+	// DisableReadCache sends every read to the platform, even ones this run
+	// has already made. Only worth setting to rule the cache out when
+	// diagnosing a problem.
+	DisableReadCache bool
 }
 
 // New validates cfg and returns a Client for it.
@@ -79,6 +85,7 @@ func New(cfg Config) (*Client, error) {
 		// resources should not be the reason someone's dashboard stops loading.
 		limiter:      rate.NewLimiter(rate.Limit(8), 8),
 		pollInterval: 10 * time.Second,
+		cache:        newReadCache(!cfg.DisableReadCache),
 	}, nil
 }
 
@@ -117,6 +124,12 @@ func (c *Client) ExecuteOnce(ctx context.Context, query string, variables map[st
 }
 
 func (c *Client) execute(ctx context.Context, query string, variables map[string]any, out any, idempotent bool) error {
+	// Before the write is sent, not after: a read racing it must not be able
+	// to cache what the platform held before the write landed.
+	if !isReadOnly(query) {
+		c.cache.disable()
+	}
+
 	body, err := json.Marshal(request{Query: query, Variables: variables})
 	if err != nil {
 		return fmt.Errorf("encoding request: %w", err)

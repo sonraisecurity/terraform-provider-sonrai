@@ -5,8 +5,10 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/sonraisecurity/terraform-provider-sonrai/internal/client"
@@ -117,5 +119,92 @@ func TestEntitlementsToSetEmpty(t *testing.T) {
 	}
 	if len(set.Elements()) != 0 {
 		t.Errorf("got %d elements, want none", len(set.Elements()))
+	}
+}
+
+func entitlementObject(t *testing.T, name string, entitlementType attr.Value, autoPod attr.Value) attr.Value {
+	t.Helper()
+	obj, diags := types.ObjectValue(jitEntitlementAttrTypes, map[string]attr.Value{
+		"name": types.StringValue(name), "type": entitlementType, "auto_pod": autoPod,
+	})
+	if diags.HasError() {
+		t.Fatalf("ObjectValue: %s", diags)
+	}
+	return obj
+}
+
+func planEntitlements(t *testing.T, config types.Set) planmodifier.SetResponse {
+	t.Helper()
+	resp := planmodifier.SetResponse{PlanValue: config}
+	entitlementDefaults{}.PlanModifySet(context.Background(),
+		planmodifier.SetRequest{ConfigValue: config, PlanValue: config}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("PlanModifySet: %s", resp.Diagnostics)
+	}
+	return resp
+}
+
+// TestEntitlementDefaultsKeepConfiguredAutoPod is the regression for a plan
+// that switched AutoPoD off: with type left out and auto_pod = true, nested
+// schema defaults planned auto_pod = false.
+func TestEntitlementDefaultsKeepConfiguredAutoPod(t *testing.T) {
+	objType := types.ObjectType{AttrTypes: jitEntitlementAttrTypes}
+	config := types.SetValueMust(objType, []attr.Value{
+		entitlementObject(t, "OnCallReadOnly", types.StringNull(), types.BoolValue(true)),
+		entitlementObject(t, "OnCallReadWrite", types.StringNull(), types.BoolValue(true)),
+		entitlementObject(t, "ReadOnlyAccess", types.StringValue("AWS_SAML_ROLE"), types.BoolNull()),
+	})
+
+	got, diags := entitlementsFromSet(context.Background(), planEntitlements(t, config).PlanValue)
+	if diags.HasError() {
+		t.Fatalf("entitlementsFromSet: %s", diags)
+	}
+	want := map[string]client.JitEntitlement{
+		"OnCallReadOnly":  {Name: "OnCallReadOnly", Type: client.EntitlementPermissionSet, FullAccess: true},
+		"OnCallReadWrite": {Name: "OnCallReadWrite", Type: client.EntitlementPermissionSet, FullAccess: true},
+		"ReadOnlyAccess":  {Name: "ReadOnlyAccess", Type: "AWS_SAML_ROLE", FullAccess: false},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d entitlements, want %d: %v", len(got), len(want), got)
+	}
+	for _, e := range got {
+		if !reflect.DeepEqual(e, want[e.Name]) {
+			t.Errorf("%s = %+v, want %+v", e.Name, e, want[e.Name])
+		}
+	}
+}
+
+func TestEntitlementDefaultsCollapseSpelledOutDefaults(t *testing.T) {
+	objType := types.ObjectType{AttrTypes: jitEntitlementAttrTypes}
+	config := types.SetValueMust(objType, []attr.Value{
+		entitlementObject(t, "A", types.StringNull(), types.BoolNull()),
+		entitlementObject(t, "A", types.StringValue(client.EntitlementPermissionSet), types.BoolValue(false)),
+	})
+	if n := len(planEntitlements(t, config).PlanValue.Elements()); n != 1 {
+		t.Errorf("planned %d entitlements, want 1", n)
+	}
+}
+
+func TestEntitlementDefaultsLeaveUnknownAlone(t *testing.T) {
+	objType := types.ObjectType{AttrTypes: jitEntitlementAttrTypes}
+	unknown := types.SetUnknown(objType)
+	if got := planEntitlements(t, unknown).PlanValue; !got.IsUnknown() {
+		t.Errorf("plan = %v, want unknown", got)
+	}
+	partly := types.SetValueMust(objType, []attr.Value{types.ObjectUnknown(jitEntitlementAttrTypes)})
+	if got := planEntitlements(t, partly).PlanValue; !got.Equal(partly) {
+		t.Errorf("plan = %v, want it untouched", got)
+	}
+}
+
+// TestEntitlementNestedAttributesHaveNoDefaults guards against reintroducing
+// schema defaults inside the set, which is what caused the AutoPoD bug.
+func TestEntitlementNestedAttributesHaveNoDefaults(t *testing.T) {
+	set := jitSchema(t).Attributes["enrolled_entitlements"].(schema.SetNestedAttribute)
+	if set.NestedObject.Attributes["type"].(schema.StringAttribute).Default != nil {
+		t.Error("type must not carry a schema default; entitlementDefaults fills it")
+	}
+	if set.NestedObject.Attributes["auto_pod"].(schema.BoolAttribute).Default != nil {
+		t.Error("auto_pod must not carry a schema default; entitlementDefaults fills it")
 	}
 }

@@ -4,6 +4,8 @@ package provider
 import (
 	"context"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -86,11 +88,25 @@ func (p *sonraiProvider) Configure(ctx context.Context, req provider.ConfigureRe
 		return
 	}
 
+	// An escape hatch for diagnosing a suspected stale read, not a tuning
+	// knob, so it is an environment variable rather than an attribute.
+	disableCache := false
+	if raw := strings.TrimSpace(os.Getenv("SONRAI_DISABLE_READ_CACHE")); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			resp.Diagnostics.AddError("Invalid SONRAI_DISABLE_READ_CACHE",
+				"SONRAI_DISABLE_READ_CACHE must be true or false (or 1 or 0).")
+			return
+		}
+		disableCache = parsed
+	}
+
 	cfg := client.Config{
-		Org:       firstNonEmpty(config.Org.ValueString(), os.Getenv("SONRAI_ORG")),
-		Domain:    firstNonEmpty(config.Domain.ValueString(), os.Getenv("SONRAI_DOMAIN")),
-		Token:     firstNonEmpty(config.Token.ValueString(), os.Getenv("SONRAI_TOKEN")),
-		UserAgent: "terraform-provider-sonrai/" + p.version,
+		Org:              firstNonEmpty(config.Org.ValueString(), os.Getenv("SONRAI_ORG")),
+		Domain:           firstNonEmpty(config.Domain.ValueString(), os.Getenv("SONRAI_DOMAIN")),
+		Token:            firstNonEmpty(config.Token.ValueString(), os.Getenv("SONRAI_TOKEN")),
+		UserAgent:        "terraform-provider-sonrai/" + p.version,
+		DisableReadCache: disableCache,
 	}
 
 	if cfg.Org == "" {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -12,7 +13,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setdefault"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -106,6 +106,9 @@ func (r *jitConfigurationResource) Schema(_ context.Context, _ resource.SchemaRe
 				// never fills it, which the framework rejects.
 				Default: setdefault.StaticValue(types.SetValueMust(
 					types.ObjectType{AttrTypes: jitEntitlementAttrTypes}, nil)),
+				// type and auto_pod default here, not on the attributes
+				// themselves. See entitlementDefaults.
+				PlanModifiers: []planmodifier.Set{entitlementDefaults{}},
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
 						"name": schema.StringAttribute{
@@ -122,7 +125,6 @@ func (r *jitConfigurationResource) Schema(_ context.Context, _ resource.SchemaRe
 								"`AWS_PERMISSION_SET`.",
 							Optional: true,
 							Computed: true,
-							Default:  stringdefault.StaticString(client.EntitlementPermissionSet),
 							Validators: []validator.String{
 								stringvalidator.OneOf(client.EntitlementTypes...),
 							},
@@ -134,7 +136,6 @@ func (r *jitConfigurationResource) Schema(_ context.Context, _ resource.SchemaRe
 								"false.",
 							Optional: true,
 							Computed: true,
-							Default:  booldefault.StaticBool(false),
 						},
 					},
 				},
@@ -146,6 +147,76 @@ func (r *jitConfigurationResource) Schema(_ context.Context, _ resource.SchemaRe
 			},
 		},
 	}
+}
+
+// entitlementDefaults fills in type and auto_pod on each configured
+// entitlement that leaves them out.
+//
+// They cannot be schema defaults on the nested attributes. The framework
+// applies a nested default inside a set element and then looks for that
+// element's config by value; an element that left out type no longer equals
+// its config once type is filled in, so it is treated as wholly unconfigured
+// and every nested default is applied -- planning auto_pod = false over a
+// configured true, and an apply that switches AutoPoD off. Working from the
+// config set directly needs no matching, so a configured value always stands.
+type entitlementDefaults struct{}
+
+func (entitlementDefaults) Description(context.Context) string {
+	return "type defaults to " + client.EntitlementPermissionSet + " and auto_pod to false"
+}
+
+func (m entitlementDefaults) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+
+func (entitlementDefaults) PlanModifySet(ctx context.Context, req planmodifier.SetRequest, resp *planmodifier.SetResponse) {
+	// A null config is the set-level default's to handle. An unknown one, or
+	// one with an unknown element, cannot be filled in until it is known.
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	for _, element := range req.ConfigValue.Elements() {
+		if element.IsUnknown() {
+			return
+		}
+	}
+
+	var configured []jitEntitlementModel
+	resp.Diagnostics.Append(req.ConfigValue.ElementsAs(ctx, &configured, false)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	objType := types.ObjectType{AttrTypes: jitEntitlementAttrTypes}
+	values := make([]attr.Value, 0, len(configured))
+	seen := map[string]struct{}{}
+	for _, e := range configured {
+		if e.Type.IsNull() {
+			e.Type = types.StringValue(client.EntitlementPermissionSet)
+		}
+		if e.AutoPod.IsNull() {
+			e.AutoPod = types.BoolValue(false)
+		}
+		obj, diags := types.ObjectValueFrom(ctx, jitEntitlementAttrTypes, e)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		// Two entries that differed only by spelling out a default are the
+		// same entitlement once it is filled in, and a set holds it once.
+		if _, dup := seen[obj.String()]; dup {
+			continue
+		}
+		seen[obj.String()] = struct{}{}
+		values = append(values, obj)
+	}
+
+	planned, diags := types.SetValue(objType, values)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	resp.PlanValue = planned
 }
 
 func (r *jitConfigurationResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {

@@ -446,6 +446,14 @@ Point `template_url` at `stack_template_location` rather than
 `template_location`, which is empty whenever a submission changes nothing
 deployable. Applying again clears the error.
 
+**A plan that disagrees with the console.** Within one run, the provider
+shares reads between controls in the same account -- the account's hierarchy
+entry, its service list, its exceptions -- rather than asking once per control.
+That is what keeps the API calls of a plan over thousands of controls to a
+handful per account. The sharing stops at the first change the run makes, and nothing is kept
+between runs. To rule it out, set `SONRAI_DISABLE_READ_CACHE=true` and plan
+again: every read then goes to the platform, at the cost of a much slower plan.
+
 ## Configuration
 
 ### Provider

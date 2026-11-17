@@ -106,7 +106,22 @@ func (c *Client) UnmanageService(ctx context.Context, controlKey, scope string) 
 //
 // It returns ErrNotFound when the API knows of no such service at that scope.
 // A valid service with no control returns a status rather than an error.
+//
+// The status is taken from the scope's whole service list when this run can
+// use one, which every service control in an account shares; otherwise the
+// service is read on its own.
 func (c *Client) ServiceControlStatus(ctx context.Context, controlKey, scope string) (*ControlStatus, error) {
+	statuses, err := c.scopeServiceStatuses(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	if status, ok := statuses[controlKey]; ok {
+		return &status, nil
+	}
+	return c.serviceControlStatusForKey(ctx, controlKey, scope)
+}
+
+func (c *Client) serviceControlStatusForKey(ctx context.Context, controlKey, scope string) (*ControlStatus, error) {
 	var out struct {
 		CloudServiceUsage struct {
 			Items []struct {
@@ -146,6 +161,16 @@ query appliedControlKeys($scope: String!) {
 // mapping outright and nothing was ever in effect, while unmanaging an applied
 // one stages a removal that holds until it is deployed.
 func (c *Client) AppliedControlKeys(ctx context.Context, scope string) ([]string, error) {
+	cached, err := c.cache.get(ctx, cacheKey("applied-keys", scope), func(ctx context.Context) (any, error) {
+		return c.fetchAppliedControlKeys(ctx, scope)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return append([]string(nil), cached.([]string)...), nil
+}
+
+func (c *Client) fetchAppliedControlKeys(ctx context.Context, scope string) ([]string, error) {
 	var out struct {
 		AppliedControlMappings struct {
 			Items []struct {

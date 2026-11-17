@@ -67,7 +67,20 @@ type RegionControl struct {
 }
 
 // RegionControls lists every region visible at exactly scope.
+//
+// Every region control in an account reads the same list, so it is fetched
+// once per scope and shared; callers get their own copy.
 func (c *Client) RegionControls(ctx context.Context, scope string) ([]RegionControl, error) {
+	cached, err := c.cache.get(ctx, cacheKey("regions", scope), func(ctx context.Context) (any, error) {
+		return c.fetchRegionControls(ctx, scope)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return append([]RegionControl(nil), cached.([]RegionControl)...), nil
+}
+
+func (c *Client) fetchRegionControls(ctx context.Context, scope string) ([]RegionControl, error) {
 	var out struct {
 		RegionsControls struct {
 			Items []struct {

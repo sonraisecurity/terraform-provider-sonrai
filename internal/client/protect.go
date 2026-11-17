@@ -173,26 +173,45 @@ func (c *Client) RemoveControlException(ctx context.Context, rootScope, scope, c
 // the appliedExceptionList on CloudServiceUsage: that list is a display
 // projection which renders SSO identities as display names, so it cannot be
 // compared with what was written.
+//
+// Both lists are read for the whole scope at once and shared by every
+// protected service there. When that read cannot be trusted to be complete,
+// the two lists are read for controlKey alone, as they always used to be.
 func (c *Client) ControlExceptions(ctx context.Context, controlKey, scope string) (*ControlExceptions, error) {
+	batch, err := c.scopeExceptions(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	if batch != nil {
+		return mergeExceptions(batch.applied[controlKey], batch.staged[controlKey]), nil
+	}
+	return c.controlExceptionsForKey(ctx, controlKey, scope)
+}
+
+func (c *Client) controlExceptionsForKey(ctx context.Context, controlKey, scope string) (*ControlExceptions, error) {
 	vars := map[string]any{"controlKey": controlKey, "scope": scope}
 
 	var applied struct {
-		AppliedControlExceptions struct {
-			Items []struct {
-				Identities  []string `json:"identities"`
-				SSOActorIDs []string `json:"ssoActorIds"`
-				ControlID   string   `json:"controlId"`
-			} `json:"items"`
-		} `json:"AppliedControlExceptions"`
+		AppliedControlExceptions exceptionList `json:"AppliedControlExceptions"`
 	}
 	if err := c.Execute(ctx, appliedControlExceptionsQuery, vars, &applied); err != nil {
 		return nil, err
 	}
+	var staged struct {
+		StagedControlExceptions exceptionList `json:"StagedControlExceptions"`
+	}
+	if err := c.Execute(ctx, stagedControlExceptionsQuery, vars, &staged); err != nil {
+		return nil, err
+	}
+	return mergeExceptions(applied.AppliedControlExceptions.Items, staged.StagedControlExceptions.Items), nil
+}
 
+// mergeExceptions applies staged exception changes over the applied ones.
+func mergeExceptions(applied, staged []exceptionItem) *ControlExceptions {
 	identities := stringSet{}
 	ssoActors := stringSet{}
 	controlID := ""
-	for _, item := range applied.AppliedControlExceptions.Items {
+	for _, item := range applied {
 		identities.add(item.Identities...)
 		ssoActors.add(item.SSOActorIDs...)
 		if controlID == "" {
@@ -200,23 +219,9 @@ func (c *Client) ControlExceptions(ctx context.Context, controlKey, scope string
 		}
 	}
 
-	var staged struct {
-		StagedControlExceptions struct {
-			Items []struct {
-				Identities  []string `json:"identities"`
-				SSOActorIDs []string `json:"ssoActorIds"`
-				Action      string   `json:"action"`
-				ControlID   string   `json:"controlId"`
-			} `json:"items"`
-		} `json:"StagedControlExceptions"`
-	}
-	if err := c.Execute(ctx, stagedControlExceptionsQuery, vars, &staged); err != nil {
-		return nil, err
-	}
-
 	// Staged changes are the intent, matching how a control's status reads
 	// Protected from the moment it is staged.
-	for _, item := range staged.StagedControlExceptions.Items {
+	for _, item := range staged {
 		if controlID == "" {
 			controlID = item.ControlID
 		}
@@ -233,7 +238,112 @@ func (c *Client) ControlExceptions(ctx context.Context, controlKey, scope string
 		Identities:  identities.sorted(),
 		SSOActorIDs: ssoActors.sorted(),
 		ControlID:   controlID,
-	}, nil
+	}
+}
+
+// exceptionItem is one row of AppliedControlExceptions or
+// StagedControlExceptions. Action is only set on staged rows.
+type exceptionItem struct {
+	ControlKey  string   `json:"controlKey"`
+	Identities  []string `json:"identities"`
+	SSOActorIDs []string `json:"ssoActorIds"`
+	Action      string   `json:"action"`
+	ControlID   string   `json:"controlId"`
+}
+
+type exceptionList struct {
+	// Count is the number of rows matching the filter, which may be more than
+	// the page of items returned. Nil when the query did not select it.
+	Count *int            `json:"count"`
+	Items []exceptionItem `json:"items"`
+}
+
+// complete reports whether the list holds every matching row and each row says
+// which control it belongs to: the conditions under which a control key
+// missing from it means "no exceptions" rather than "not on this page".
+func (l exceptionList) complete() bool {
+	if l.Count == nil || *l.Count != len(l.Items) {
+		return false
+	}
+	for _, item := range l.Items {
+		if item.ControlKey == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func (l exceptionList) byControlKey() map[string][]exceptionItem {
+	out := map[string][]exceptionItem{}
+	for _, item := range l.Items {
+		out[item.ControlKey] = append(out[item.ControlKey], item)
+	}
+	return out
+}
+
+const scopeAppliedControlExceptionsQuery = `
+query scopeAppliedControlExceptions($scope: String!) {
+  AppliedControlExceptions(where: {scope: {op: EQ, value: $scope}}) {
+    count
+    items { controlKey identities ssoActorIds controlId }
+  }
+}`
+
+const scopeStagedControlExceptionsQuery = `
+query scopeStagedControlExceptions($scope: String!) {
+  StagedControlExceptions(where: {scope: {op: EQ, value: $scope}}) {
+    count
+    items { controlKey identities ssoActorIds action controlId }
+  }
+}`
+
+// scopeExceptionBatch is every applied and staged exception at one scope,
+// grouped by control key.
+type scopeExceptionBatch struct {
+	applied map[string][]exceptionItem
+	staged  map[string][]exceptionItem
+}
+
+// scopeExceptions reads every exception at scope in two queries, returning nil
+// with no error when the result cannot be trusted to be complete, so the
+// caller falls back to reading one control at a time.
+//
+// A missing control key in this batch is taken to mean the control has no
+// exceptions, so a page that silently stopped short would erase exemptions
+// from state. Hence the count check, and the fallback on any failure that is
+// not the caller's own: a server that predates a selected field rejects the
+// whole query.
+func (c *Client) scopeExceptions(ctx context.Context, scope string) (*scopeExceptionBatch, error) {
+	if !c.cache.enabled() {
+		return nil, nil
+	}
+	cached, err := c.cache.get(ctx, cacheKey("exceptions", scope), func(ctx context.Context) (any, error) {
+		vars := map[string]any{"scope": scope}
+		var applied struct {
+			AppliedControlExceptions exceptionList `json:"AppliedControlExceptions"`
+		}
+		if err := c.Execute(ctx, scopeAppliedControlExceptionsQuery, vars, &applied); err != nil {
+			return batchFailure(ctx, "exceptions", scope, err)
+		}
+		var staged struct {
+			StagedControlExceptions exceptionList `json:"StagedControlExceptions"`
+		}
+		if err := c.Execute(ctx, scopeStagedControlExceptionsQuery, vars, &staged); err != nil {
+			return batchFailure(ctx, "exceptions", scope, err)
+		}
+		if !applied.AppliedControlExceptions.complete() || !staged.StagedControlExceptions.complete() {
+			return batchFailure(ctx, "exceptions", scope, errIncompleteBatch)
+		}
+		return &scopeExceptionBatch{
+			applied: applied.AppliedControlExceptions.byControlKey(),
+			staged:  staged.StagedControlExceptions.byControlKey(),
+		}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	batch, _ := cached.(*scopeExceptionBatch)
+	return batch, nil
 }
 
 // stringSet merges applied and staged entries before they are sorted.
