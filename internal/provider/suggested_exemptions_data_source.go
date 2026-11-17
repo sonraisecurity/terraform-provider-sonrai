@@ -56,6 +56,8 @@ func (d *suggestedExemptionsDataSource) Schema(_ context.Context, _ datasource.S
 			"they recently used one of its sensitive permissions.\n\n" +
 			"`sonrai_account_protected_service` does not apply these automatically. Review them, then " +
 			"list the ones you want in `exempt_identities` and `exempt_sso_actor_ids`.\n\n" +
+			"`identities` are always full ARNs, the form `exempt_identities` requires, so they can " +
+			"be copied or referenced as they are.\n\n" +
 			"The lookback window is an organization setting, so this set changes over time on its own. " +
 			"Referencing `identities` directly keeps exemptions tracking the window; copying the values " +
 			"into configuration keeps them stable until you change them.",
@@ -90,7 +92,7 @@ func (d *suggestedExemptionsDataSource) Schema(_ context.Context, _ datasource.S
 				Computed:            true,
 			},
 			"identities": schema.SetAttribute{
-				MarkdownDescription: "Suggested non-SSO identities, ready to pass to `exempt_identities`.",
+				MarkdownDescription: "Suggested non-SSO identities as full ARNs, ready to pass to `exempt_identities`.",
 				ElementType:         types.StringType,
 				Computed:            true,
 			},

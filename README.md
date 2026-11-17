@@ -291,13 +291,35 @@ root scope and avoid concurrent applies against the same one.
 ```hcl
 resource "sonrai_exempted_identity" "break_glass" {
   scope       = "aws/r-abcd"
-  identity    = "arn:aws:iam::*:role/BreakGlass"
+  identity    = "*e/BreakGlass"
   exempt_from = ["service_protect", "service_block"]
 }
 ```
 
 Identities are matched as patterns, so one entry covers every account under the
 scope. AWS only.
+
+### ARNs and patterns
+
+Where an identity is given decides whether a pattern is allowed:
+
+| Where | Form |
+|---|---|
+| `sonrai_exempted_identity.identity` | The smallest pattern that names the identity, such as `*e/BreakGlass`, even for a single account: `scope` limits it to the account. |
+| `sonrai_account_protected_service.exempt_identities` | Full ARN, including the account id. **Patterns are not supported.** |
+| `sonrai_suggested_exemptions.identities` | Always full ARNs, ready for `exempt_identities`. |
+| `exempt_sso_actor_ids`, or `identity` with `sso = true` | The SSO actor id, not an ARN. |
+
+Keep patterns short. Each pattern is repeated across the statements of the
+size-limited policies the platform deploys, so every extra character is spent
+many times. `*e/BreakGlass` names the same role as
+`arn:aws:iam::*:role/BreakGlass` at a fraction of the cost. If your role or user
+names contain `/`, a short pattern can match more than you intend; spell out
+more, such as `*role/BreakGlass`.
+
+To exempt a role from protects in every account, don't repeat its ARN on each
+protect. Use one `sonrai_exempted_identity` with a pattern and
+`service_protect` in `exempt_from`.
 
 ### Disable a region
 

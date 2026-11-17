@@ -71,9 +71,18 @@ func (r *exemptedIdentityResource) Schema(_ context.Context, _ resource.SchemaRe
 			"An identity already exempted at the scope -- from the console, or by another " +
 			"configuration -- is rejected rather than adopted.\n\n" +
 			"AWS only for now.\n\n" +
-			"Identities are matched as **patterns**, so `arn:aws:iam::*:role/BreakGlass` covers that " +
-			"role in every account. A pattern that names no resource, such as `arn:aws:iam::`, would " +
-			"match every ARN in the organization and is refused.\n\n" +
+			"Identities are matched as **patterns**, and a pattern is the recommended form: " +
+			"`*e/BreakGlass` covers that role in every account, including accounts " +
+			"added later. Keep patterns short: each one is repeated across the statements of " +
+			"the size-limited policies the platform deploys, so `*e/BreakGlass` leaves far more " +
+			"room than `arn:aws:iam::*:role/BreakGlass`, which names the same role. If your role " +
+			"or user names contain `/`, a short pattern can match more than intended; spell out " +
+			"more, such as `*role/BreakGlass`.\n\n" +
+			"Use the smallest pattern that names the identity, even for one account. `scope` is " +
+			"what limits an exemption to an account; a full ARN adds nothing but length, and is " +
+			"still repeated in every statement of every policy for that account.\n\n" +
+			"Patterns are accepted here only. `exempt_identities` on " +
+			"`sonrai_account_protected_service` requires full ARNs.\n\n" +
 			"Creating this resource *stages* the change. It takes effect only once the pending " +
 			"changes for the containing root scope are submitted and deployed.",
 		Attributes: map[string]schema.Attribute{
@@ -97,8 +106,8 @@ func (r *exemptedIdentityResource) Schema(_ context.Context, _ resource.SchemaRe
 				},
 			},
 			"identity": schema.StringAttribute{
-				MarkdownDescription: "ARN pattern to exempt, such as " +
-					"`arn:aws:iam::*:role/BreakGlass`, or the SSO actor id when `sso` is true.",
+				MarkdownDescription: "Pattern to exempt, as short as will name the identity, such " +
+					"as `*e/BreakGlass`. The SSO actor id when `sso` is true.",
 				Required: true,
 				Validators: []validator.String{
 					stringvalidator.LengthAtLeast(1),
@@ -310,7 +319,7 @@ func (r *exemptedIdentityResource) ImportState(ctx context.Context, req resource
 			fmt.Sprintf("Expected %q with %q appended for an SSO identity, for example %q or %q, but got %q.",
 				"identity"+importSeparator+"scope",
 				importSeparator+"sso",
-				"arn:aws:iam::*:role/BreakGlass"+importSeparator+"aws/r-abcd",
+				"*e/BreakGlass"+importSeparator+"aws/r-abcd",
 				"someone@example.com"+importSeparator+"aws/r-abcd"+importSeparator+"sso",
 				req.ID),
 		)

@@ -178,7 +178,8 @@ they are using.
 #### 2. Declare the protect
 
 Copy the identities you want to keep working into the resource. Non-SSO
-identities go in `exempt_identities`, SSO identities in
+identities go in `exempt_identities` as full ARNs, exactly as the suggestions
+give them; patterns are not supported there. SSO identities go in
 `exempt_sso_actor_ids` using their `sso_actor_id`:
 
 ```hcl
@@ -439,7 +440,7 @@ with `import` blocks. Each resource's import ID:
 |---|---|---|
 | `sonrai_account_disabled_service` | `control_key@root_scope@resource_id` | `cloud9@aws/r-abcd@123456789012` |
 | `sonrai_account_protected_service` | `control_key@root_scope@resource_id` | `iam@aws/r-abcd@123456789012` |
-| `sonrai_exempted_identity` | `identity@scope`, plus `@sso` for an SSO actor id | `arn:aws:iam::*:role/BreakGlass@aws/r-abcd` |
+| `sonrai_exempted_identity` | `identity@scope`, plus `@sso` for an SSO actor id | `*e/BreakGlass@aws/r-abcd` |
 | `sonrai_region_control` | `region_id@root_scope@resource_id` | `ap-south-1@aws/r-abcd@123456789012` |
 | `sonrai_jit_configuration` | The scope | `aws/r-abcd/123456789012` |
 | `sonrai_control_submission` | The transaction id | `a1b2c3d4-0000-4000-8000-000000000000` |
@@ -579,6 +580,68 @@ resolves containers as well, for reference.
 The provider resolves the scope path on every operation, so moving an account
 between organizational units requires no configuration change.
 
+## Identities: ARNs and patterns
+
+Exemptions name identities in two places, and only one of them accepts
+patterns:
+
+| Where | Form | Patterns |
+|---|---|---|
+| `sonrai_exempted_identity.identity` | Smallest pattern that names the identity | **Yes, always** |
+| `sonrai_account_protected_service.exempt_identities` | Full ARN, including the account id | **No** |
+| `sonrai_suggested_exemptions.identities` | Full ARN (output) | — |
+| `exempt_sso_actor_ids`, or `identity` with `sso = true` | SSO actor id, not an ARN | — |
+
+**Exempted identities** are matched as patterns. Prefer a pattern such as
+`*e/BreakGlass`: one entry covers the role in every account under the scope,
+including accounts added later.
+
+Use the smallest pattern that names the identity, even when the exemption is
+for one account. `scope` is what limits an exemption to an account. A full ARN
+adds nothing but length, and is still repeated in every statement of every
+policy for that account:
+
+```hcl
+resource "sonrai_exempted_identity" "deploy_robot" {
+  scope       = "aws/r-abcd/123456789012"
+  identity    = "*e/DeployRobot"
+  exempt_from = ["service_protect"]
+}
+```
+
+Keep patterns short. The platform writes each exemption pattern into many
+statements of the policies it deploys, and those policies have a size limit.
+Every character in a pattern is paid for again in each statement, so a long
+pattern can use up room that other controls need. `*e/BreakGlass` names the same
+role as `arn:aws:iam::*:role/BreakGlass` at a fraction of the length: the `e/`
+is the end of `role/`, and nothing before it needs spelling out.
+
+A short pattern matches any ARN that ends the same way. If your organization
+uses `/` in role or user names, for example IAM paths such as
+`role/platform/BreakGlass`, `*e/BreakGlass` can match more than you intend.
+Spell out enough to tell them apart, such as `*role/BreakGlass`.
+
+**Protected-service exemptions** must be full ARNs, such as
+`arn:aws:iam::123456789012:role/CrossAccountIAMAdminRole`. A protect covers
+one service in one account, so each exemption names one identity there.
+`sonrai_suggested_exemptions` always returns full ARNs, so its `identities` can
+be copied or referenced as they are.
+
+To exempt a role from protects in every account, don't list its ARN on each
+protect. Use one exempted identity with a pattern:
+
+```hcl
+resource "sonrai_exempted_identity" "iam_admin" {
+  scope       = "aws/r-abcd"
+  identity    = "*e/CrossAccountIAMAdminRole"
+  exempt_from = ["service_protect"]
+}
+```
+
+This exempts the role from every protected service, not just one. Keep
+per-service exemptions on the protect, and use exempted identities for roles
+that should get past all protects.
+
 ## Resources
 
 ### `sonrai_account_disabled_service`
@@ -615,7 +678,7 @@ protected is rejected rather than adopted; import it to manage it.
 | `root_scope` | string | required | Cloud organization root scope. Forces replacement. |
 | `resource_id` | string | required | Id of the account. Forces replacement. |
 | `control_key` | string | required | Firewall control key, such as `iam`. Forces replacement. |
-| `exempt_identities` | set(string) | optional | Identities exempt from this control, as ARNs or resource ids. Defaults to empty. |
+| `exempt_identities` | set(string) | optional | Identities exempt from this control, as full ARNs. Patterns are not supported. Defaults to empty. |
 | `exempt_sso_actor_ids` | set(string) | optional | SSO actor ids exempt from this control. Defaults to empty. |
 | `timeboxed_exempt_identities` | set(string) | computed | Identities exempt through a time-limited Permissions on Demand grant. |
 | `timeboxed_exempt_sso_actor_ids` | set(string) | computed | SSO actor ids exempt through a time-limited Permissions on Demand grant. |
@@ -653,7 +716,7 @@ adopted; import it to manage it. AWS only.
 | Attribute | Type | | |
 |---|---|---|---|
 | `scope` | string | required | Scope to define the exemption at. Forces replacement. |
-| `identity` | string | required | ARN pattern, or SSO actor id when `sso`. Forces replacement. |
+| `identity` | string | required | Smallest pattern that names the identity, such as `*e/BreakGlass`, or SSO actor id when `sso`. Forces replacement. |
 | `sso` | bool | optional | Whether `identity` is an IAM Identity Center user. Defaults to false. Forces replacement. |
 | `exempt_from` | set(string) | required | `service_protect`, `service_block`, `quarantine`, `region_block`, `jit`, `tamper_protect`. |
 | `pending` | bool | computed | True while a staged change has not been deployed. |
@@ -662,18 +725,17 @@ This is not the per-control exemption on `sonrai_account_protected_service`.
 That one names identities exempt from a single control; this exempts an
 identity from every control of the listed kinds.
 
-Identities are matched as patterns, so one entry covers every account:
+Identities are matched as patterns, and a pattern is the recommended form. One
+entry covers every account (see
+[Identities: ARNs and patterns](#identities-arns-and-patterns)):
 
 ```hcl
 resource "sonrai_exempted_identity" "break_glass" {
   scope       = "aws/r-abcd"
-  identity    = "arn:aws:iam::*:role/BreakGlass"
+  identity    = "*e/BreakGlass"
   exempt_from = ["service_protect", "service_block"]
 }
 ```
-
-A pattern that names no resource, such as `arn:aws:iam::`, matches every ARN in
-the organization and is refused at plan time.
 
 The platform holds one entry per identity at a scope, so `exempt_from` carries
 every kind at once; kinds left out are turned off. Scopes are exact: an
@@ -899,7 +961,7 @@ recently used one of its sensitive permissions.
 | `resource_id` | string | required | Id of the account. |
 | `control_key` | string | required | |
 | `scope` | string | computed | Resolved scope path. |
-| `identities` | set(string) | computed | Suggested non-SSO identities, for `exempt_identities`. |
+| `identities` | set(string) | computed | Suggested non-SSO identities as full ARNs, for `exempt_identities`. |
 | `sso_actor_ids` | set(string) | computed | Suggested SSO actor ids, for `exempt_sso_actor_ids`. |
 | `suggestions` | list(object) | computed | Each suggestion with `name`, `is_sso`, `last_sensitive_used` and `last_sensitive_used_date`. |
 

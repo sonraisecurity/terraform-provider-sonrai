@@ -1,7 +1,7 @@
 # Import ID: identity@scope, with @sso appended for an SSO actor id.
 import {
   to = sonrai_exempted_identity.break_glass
-  id = "arn:aws:iam::*:role/BreakGlass@aws/r-abcd"
+  id = "*e/BreakGlass@aws/r-abcd"
 }
 
 import {

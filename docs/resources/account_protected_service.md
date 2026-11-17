@@ -5,6 +5,7 @@ subcategory: ""
 description: |-
   Protects one cloud service in one account, firewalling its sensitive permissions for every identity except those exempted here.
   A service already protected -- from the console, or by another configuration -- is rejected rather than adopted.
+  Exempt identities must be full ARNs; patterns are not supported. To exempt an identity across many accounts with one pattern, use sonrai_exempted_identity instead.
   Exemptions are attributes of the protect rather than resources of their own: each apply converges the platform's exemption set on the configured one, and the platform removes them when the control is unmanaged or switched to a disable.
   The platform's own suggested exemptions are not applied. Read them with the sonrai_suggested_exemptions data source and list the ones you want, so that the same configuration always produces the same result.
   Exemptions granted by a time-limited Permissions on Demand approval are reported in timeboxed_exempt_identities and timeboxed_exempt_sso_actor_ids and are not managed here: they expire on their own, and listing them would have Terraform fight the approval workflow. A PoD approval granted permanently is indistinguishable from one made here, so it is treated as drift and removed on the next apply unless it is added to exempt_identities.
@@ -16,6 +17,8 @@ description: |-
 Protects one cloud service in one account, firewalling its sensitive permissions for every identity except those exempted here.
 
 A service already protected -- from the console, or by another configuration -- is rejected rather than adopted.
+
+Exempt identities must be full ARNs; patterns are not supported. To exempt an identity across many accounts with one pattern, use `sonrai_exempted_identity` instead.
 
 Exemptions are attributes of the protect rather than resources of their own: each apply converges the platform's exemption set on the configured one, and the platform removes them when the control is unmanaged or switched to a disable.
 
@@ -36,6 +39,8 @@ resource "sonrai_account_protected_service" "iam_prod" {
   resource_id = "123456789012"
   control_key = "iam"
 
+  # Full ARNs only; patterns are not supported here. For a role that should be
+  # exempt in every account, use sonrai_exempted_identity with a pattern.
   exempt_identities = [
     "arn:aws:iam::123456789012:role/CrossAccountIAMAdminRole",
   ]
@@ -72,7 +77,7 @@ output "iam_prod" {
 
 ### Optional
 
-- `exempt_identities` (Set of String) Cloud-native identities exempt from this control, as ARNs or resource ids, for example `arn:aws:iam::123456789012:role/Admin`.
+- `exempt_identities` (Set of String) Cloud-native identities exempt from this control. Each must be a full ARN, including the account id, for example `arn:aws:iam::123456789012:role/Admin`. Patterns are not supported here: to exempt a role in every account, use `sonrai_exempted_identity` with an ARN pattern and `service_protect` in `exempt_from`. The `identities` of `sonrai_suggested_exemptions` are already in this form.
 - `exempt_sso_actor_ids` (Set of String) SSO actor ids exempt from this control. Kept separate from `exempt_identities` because the platform stores and matches them separately.
 
 ### Read-Only
