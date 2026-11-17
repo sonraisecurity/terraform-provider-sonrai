@@ -81,8 +81,6 @@ func (r *exemptedIdentityResource) Schema(_ context.Context, _ resource.SchemaRe
 			"Use the smallest pattern that names the identity, even for one account. `scope` is " +
 			"what limits an exemption to an account; a full ARN adds nothing but length, and is " +
 			"still repeated in every statement of every policy for that account.\n\n" +
-			"A pattern that names no resource, such as `arn:aws:iam::`, would match every " +
-			"ARN in the organization and is refused.\n\n" +
 			"Patterns are accepted here only. `exempt_identities` on " +
 			"`sonrai_account_protected_service` requires full ARNs.\n\n" +
 			"Creating this resource *stages* the change. It takes effect only once the pending " +

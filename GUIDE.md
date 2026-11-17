@@ -594,8 +594,7 @@ patterns:
 
 **Exempted identities** are matched as patterns. Prefer a pattern such as
 `*e/BreakGlass`: one entry covers the role in every account under the scope,
-including accounts added later. A pattern that names no resource, such as
-`arn:aws:iam::`, is refused at plan time.
+including accounts added later.
 
 Use the smallest pattern that names the identity, even when the exemption is
 for one account. `scope` is what limits an exemption to an account. A full ARN
@@ -737,9 +736,6 @@ resource "sonrai_exempted_identity" "break_glass" {
   exempt_from = ["service_protect", "service_block"]
 }
 ```
-
-A pattern that names no resource, such as `arn:aws:iam::`, matches every ARN in
-the organization and is refused at plan time.
 
 The platform holds one entry per identity at a scope, so `exempt_from` carries
 every kind at once; kinds left out are turned off. Scopes are exact: an

@@ -10,7 +10,6 @@ description: |-
   AWS only for now.
   Identities are matched as patterns, and a pattern is the recommended form: *e/BreakGlass covers that role in every account, including accounts added later. Keep patterns short: each one is repeated across the statements of the size-limited policies the platform deploys, so *e/BreakGlass leaves far more room than arn:aws:iam::*:role/BreakGlass, which names the same role. If your role or user names contain /, a short pattern can match more than intended; spell out more, such as *role/BreakGlass.
   Use the smallest pattern that names the identity, even for one account. scope is what limits an exemption to an account; a full ARN adds nothing but length, and is still repeated in every statement of every policy for that account.
-  A pattern that names no resource, such as arn:aws:iam::, would match every ARN in the organization and is refused.
   Patterns are accepted here only. exempt_identities on sonrai_account_protected_service requires full ARNs.
   Creating this resource stages the change. It takes effect only once the pending changes for the containing root scope are submitted and deployed.
 ---
@@ -30,8 +29,6 @@ AWS only for now.
 Identities are matched as **patterns**, and a pattern is the recommended form: `*e/BreakGlass` covers that role in every account, including accounts added later. Keep patterns short: each one is repeated across the statements of the size-limited policies the platform deploys, so `*e/BreakGlass` leaves far more room than `arn:aws:iam::*:role/BreakGlass`, which names the same role. If your role or user names contain `/`, a short pattern can match more than intended; spell out more, such as `*role/BreakGlass`.
 
 Use the smallest pattern that names the identity, even for one account. `scope` is what limits an exemption to an account; a full ARN adds nothing but length, and is still repeated in every statement of every policy for that account.
-
-A pattern that names no resource, such as `arn:aws:iam::`, would match every ARN in the organization and is refused.
 
 Patterns are accepted here only. `exempt_identities` on `sonrai_account_protected_service` requires full ARNs.
 
