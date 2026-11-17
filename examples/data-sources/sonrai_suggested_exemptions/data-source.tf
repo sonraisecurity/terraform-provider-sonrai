@@ -1,5 +1,6 @@
 # Identities the platform would exempt when protecting a service. Review these,
-# then list the ones you want on the protect resource.
+# then list the ones you want on the protect resource. identities are always
+# full ARNs, which is the form exempt_identities requires.
 data "sonrai_suggested_exemptions" "iam_prod" {
   root_scope  = "aws/r-abcd"
   resource_id = "123456789012"

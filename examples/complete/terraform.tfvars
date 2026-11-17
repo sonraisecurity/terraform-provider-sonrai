@@ -49,11 +49,13 @@ jit_configurations = {
 
 # Exemptions from whole classes of control, rather than from one service.
 # Identities are matched as patterns, so one entry covers every account under
-# the scope.
+# the scope. Prefer short patterns, such as *e/BreakGlass rather than
+# arn:aws:iam::*:role/BreakGlass: each one is repeated across the size-limited
+# policies the platform deploys. protected_services below needs full ARNs.
 exempted_identities = {
   # A break-glass role in every account, exempt from protects and blocks.
   break_glass = {
-    identity    = "arn:aws:iam::*:role/BreakGlass"
+    identity    = "*e/BreakGlass"
     exempt_from = ["service_protect", "service_block"]
   }
 
@@ -64,7 +66,8 @@ exempted_identities = {
     exempt_from = ["service_block"]
   }
 
-  # Scoped to one account. scope defaults to root_scope when omitted, as above.
+  # Scoped to one account, by full ARN. scope defaults to root_scope when
+  # omitted, as above.
   deploy_robot = {
     identity    = "arn:aws:iam::123456789012:role/DeployRobot"
     exempt_from = ["service_protect"]
@@ -75,6 +78,9 @@ exempted_identities = {
 # Protects firewall a service's sensitive permissions for every identity except
 # those exempted here. Read the platform's suggestions with the
 # sonrai_suggested_exemptions data source before filling these in.
+# exempt_identities must be full ARNs, as the suggestions are; patterns are not
+# supported. Put a role that should be exempt everywhere in
+# exempted_identities instead.
 protected_services = {
   # Both kinds of exemption: ARNs and an SSO actor id.
   iam_123456789012 = {

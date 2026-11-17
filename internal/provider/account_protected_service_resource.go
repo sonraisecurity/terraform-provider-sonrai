@@ -60,6 +60,8 @@ func (r *accountProtectedServiceResource) Schema(_ context.Context, _ resource.S
 			"permissions for every identity except those exempted here.\n\n" +
 			"A service already protected -- from the console, or by another configuration -- is " +
 			"rejected rather than adopted.\n\n" +
+			"Exempt identities must be full ARNs; patterns are not supported. To exempt an identity " +
+			"across many accounts with one pattern, use `sonrai_exempted_identity` instead.\n\n" +
 			"Exemptions are attributes of the protect rather than resources of their own: each apply " +
 			"converges the platform's exemption set on the configured one, and the platform removes " +
 			"them when the control is unmanaged or switched to a disable.\n\n" +
@@ -114,8 +116,12 @@ func (r *accountProtectedServiceResource) Schema(_ context.Context, _ resource.S
 				},
 			},
 			"exempt_identities": schema.SetAttribute{
-				MarkdownDescription: "Cloud-native identities exempt from this control, as ARNs or " +
-					"resource ids, for example `arn:aws:iam::123456789012:role/Admin`.",
+				MarkdownDescription: "Cloud-native identities exempt from this control. Each must be " +
+					"a full ARN, including the account id, for example " +
+					"`arn:aws:iam::123456789012:role/Admin`. Patterns are not supported here: to " +
+					"exempt a role in every account, use `sonrai_exempted_identity` with an ARN " +
+					"pattern and `service_protect` in `exempt_from`. The `identities` of " +
+					"`sonrai_suggested_exemptions` are already in this form.",
 				ElementType: types.StringType,
 				Optional:    true,
 				Computed:    true,

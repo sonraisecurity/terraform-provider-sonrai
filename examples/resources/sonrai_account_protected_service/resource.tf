@@ -6,6 +6,8 @@ resource "sonrai_account_protected_service" "iam_prod" {
   resource_id = "123456789012"
   control_key = "iam"
 
+  # Full ARNs only; patterns are not supported here. For a role that should be
+  # exempt in every account, use sonrai_exempted_identity with a pattern.
   exempt_identities = [
     "arn:aws:iam::123456789012:role/CrossAccountIAMAdminRole",
   ]

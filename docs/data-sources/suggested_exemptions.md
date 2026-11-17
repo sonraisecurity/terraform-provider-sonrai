@@ -5,6 +5,7 @@ subcategory: ""
 description: |-
   Identities the platform would exempt when protecting a service, because they recently used one of its sensitive permissions.
   sonrai_account_protected_service does not apply these automatically. Review them, then list the ones you want in exempt_identities and exempt_sso_actor_ids.
+  identities are always full ARNs, the form exempt_identities requires, so they can be copied or referenced as they are.
   The lookback window is an organization setting, so this set changes over time on its own. Referencing identities directly keeps exemptions tracking the window; copying the values into configuration keeps them stable until you change them.
 ---
 
@@ -14,13 +15,16 @@ Identities the platform would exempt when protecting a service, because they rec
 
 `sonrai_account_protected_service` does not apply these automatically. Review them, then list the ones you want in `exempt_identities` and `exempt_sso_actor_ids`.
 
+`identities` are always full ARNs, the form `exempt_identities` requires, so they can be copied or referenced as they are.
+
 The lookback window is an organization setting, so this set changes over time on its own. Referencing `identities` directly keeps exemptions tracking the window; copying the values into configuration keeps them stable until you change them.
 
 ## Example Usage
 
 ```terraform
 # Identities the platform would exempt when protecting a service. Review these,
-# then list the ones you want on the protect resource.
+# then list the ones you want on the protect resource. identities are always
+# full ARNs, which is the form exempt_identities requires.
 data "sonrai_suggested_exemptions" "iam_prod" {
   root_scope  = "aws/r-abcd"
   resource_id = "123456789012"
@@ -73,7 +77,7 @@ data "sonrai_suggested_exemptions" "lambda_prod" {
 ### Read-Only
 
 - `id` (String) Identifier of the form `control_key@scope`.
-- `identities` (Set of String) Suggested non-SSO identities, ready to pass to `exempt_identities`.
+- `identities` (Set of String) Suggested non-SSO identities as full ARNs, ready to pass to `exempt_identities`.
 - `scope` (String) Canonical scope path the account resolved to.
 - `sso_actor_ids` (Set of String) Suggested SSO actor ids, ready to pass to `exempt_sso_actor_ids`.
 - `suggestions` (Attributes List) Each suggestion with the usage that produced it. (see [below for nested schema](#nestedatt--suggestions))
