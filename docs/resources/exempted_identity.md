@@ -11,7 +11,7 @@ description: |-
   Identities are matched as patterns, and a pattern is the recommended form: *e/BreakGlass covers that role in every account, including accounts added later. Keep patterns short: each one is repeated across the statements of the size-limited policies the platform deploys, so *e/BreakGlass leaves far more room than arn:aws:iam::*:role/BreakGlass, which names the same role. If your role or user names contain /, a short pattern can match more than intended; spell out more, such as *role/BreakGlass.
   Use the smallest pattern that names the identity, even for one account. scope is what limits an exemption to an account; a full ARN adds nothing but length, and is still repeated in every statement of every policy for that account.
   Patterns are accepted here only. exempt_identities on sonrai_account_protected_service requires full ARNs.
-  Kinds can be added to a deployed exemption in place, but not removed from one: the platform merges a change with what is already in force, so a shorter exempt_from would deploy and change nothing. A plan that drops a kind from a deployed exemption is rejected. To narrow one, remove the resource and apply, then add it back with the shorter list and apply again.
+  exempt_from is the complete list. Changing it on an existing exemption stages the difference, so a kind taken out of the list is removed when the change is deployed.
   Creating this resource stages the change. It takes effect only once the pending changes for the containing root scope are submitted and deployed.
 ---
 
@@ -33,7 +33,7 @@ Use the smallest pattern that names the identity, even for one account. `scope` 
 
 Patterns are accepted here only. `exempt_identities` on `sonrai_account_protected_service` requires full ARNs.
 
-Kinds can be added to a deployed exemption in place, but not removed from one: the platform merges a change with what is already in force, so a shorter `exempt_from` would deploy and change nothing. A plan that drops a kind from a deployed exemption is rejected. To narrow one, remove the resource and apply, then add it back with the shorter list and apply again.
+`exempt_from` is the complete list. Changing it on an existing exemption stages the difference, so a kind taken out of the list is removed when the change is deployed.
 
 Creating this resource *stages* the change. It takes effect only once the pending changes for the containing root scope are submitted and deployed.
 
