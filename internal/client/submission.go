@@ -239,11 +239,45 @@ query recentControlTransactions($rootScope: String!, $limit: Long, $offset: Long
     items(orderBy: {createdDate: {order: DESC}}, limit: $limit, offset: $offset) {
       transactionId
       status
+      statusMsg
       rootScope
       templateLocation
     }
   }
 }`
+
+// LatestCompletedTransaction returns the most recent transaction under
+// rootScope that completed, or ErrNotFound when none has.
+func (c *Client) LatestCompletedTransaction(ctx context.Context, rootScope string) (*Transaction, error) {
+	for page := 0; page < deployedTemplateMaxPages; page++ {
+		var out struct {
+			ControlTransactions struct {
+				Items []Transaction `json:"items"`
+			} `json:"ControlTransactions"`
+		}
+		vars := map[string]any{
+			"rootScope": rootScope,
+			"limit":     deployedTemplatePageSize,
+			"offset":    page * deployedTemplatePageSize,
+		}
+		if err := c.Execute(ctx, recentTransactionsQuery, vars, &out); err != nil {
+			return nil, err
+		}
+		for _, t := range out.ControlTransactions.Items {
+			if t.RootScope != "" && t.RootScope != rootScope {
+				return nil, fmt.Errorf("transactions for %q came back for %q", rootScope, t.RootScope)
+			}
+			if NormalizeStatus(t.Status) == StatusCompleted {
+				found := t
+				return &found, nil
+			}
+		}
+		if len(out.ControlTransactions.Items) < deployedTemplatePageSize {
+			break
+		}
+	}
+	return nil, fmt.Errorf("%w: no completed transaction under %q", ErrNotFound, rootScope)
+}
 
 // DeployedTemplateLocation returns the template of the most recent completed
 // transaction under rootScope that produced one, which is the template the

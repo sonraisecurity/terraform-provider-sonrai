@@ -65,7 +65,9 @@ func (r *controlSubmissionResource) Schema(_ context.Context, _ resource.SchemaR
 			"Give each configuration its own App identity, use one submission per root scope, and do not " +
 			"run concurrent applies against the same root scope.\n\n" +
 			"When the submitted changes require it, the transaction produces a CloudFormation template. " +
-			"Deploy it with `aws_cloudformation_stack` using `stack_template_location`, or from the console.",
+			"Deploy it with `aws_cloudformation_stack` using `stack_template_location`, or from the console.\n\n" +
+			"A submission that finds nothing staged starts no deployment. The resource then records the " +
+			"most recent transaction already deployed, and the apply says so in a warning.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "Transaction id of this submission.",
@@ -313,6 +315,16 @@ func (r *controlSubmissionResource) Create(ctx context.Context, req resource.Cre
 		return
 	}
 
+	// With nothing staged the platform still answers with a transaction id,
+	// but no transaction exists behind it.
+	if _, err := r.api.ControlTransaction(ctx, transactionID); isNotFound(err) {
+		resp.Diagnostics.Append(r.recordEmptySubmission(ctx, &plan)...)
+		if !resp.Diagnostics.HasError() {
+			resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		}
+		return
+	}
+
 	plan.ID = types.StringValue(transactionID)
 	plan.TransactionID = types.StringValue(transactionID)
 
@@ -325,6 +337,56 @@ func (r *controlSubmissionResource) Create(ctx context.Context, req resource.Cre
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 	resp.Diagnostics.Append(waitDiags...)
 	resp.Diagnostics.Append(stackDiags...)
+}
+
+// recordEmptySubmission fills m in for a submission that found nothing staged.
+//
+// That happens when triggers change without any resource staging anything,
+// such as a trigger being renamed. Failing would be wrong twice over: nothing
+// is out of step with the configuration, and since nothing is staged the next
+// apply would fail the same way. The resource records the transaction already
+// in force instead, which is the one the deployed template came from.
+//
+// It is only taken for empty when the token's identity has nothing pending.
+// A missing transaction with changes still pending is a failed submission.
+func (r *controlSubmissionResource) recordEmptySubmission(ctx context.Context, m *controlSubmissionModel) diag.Diagnostics {
+	var diags diag.Diagnostics
+	rootScope := m.RootScope.ValueString()
+
+	pending, err := r.api.PendingChanges(ctx, rootScope)
+	if err != nil {
+		diags.Append(diagnoseAPIError("Unable to confirm the submission", err)...)
+		return diags
+	}
+	if len(pending) > 0 {
+		diags.AddError("Submission did not start",
+			fmt.Sprintf("The platform accepted the submission for %s but created no transaction, and "+
+				"%d changes are still pending. Apply again; if this repeats, check the pending changes "+
+				"in the console.", rootScope, len(pending)))
+		return diags
+	}
+
+	latest, err := r.api.LatestCompletedTransaction(ctx, rootScope)
+	if err != nil {
+		if isNotFound(err) {
+			diags.AddError("Nothing to submit",
+				fmt.Sprintf("No changes are pending for %s and nothing has been deployed there yet, so "+
+					"there is no transaction for this resource to record. Stage a change first.", rootScope))
+			return diags
+		}
+		diags.Append(diagnoseAPIError("Unable to find the deployed transaction", err)...)
+		return diags
+	}
+
+	m.ID = types.StringValue(latest.ID)
+	m.TransactionID = types.StringValue(latest.ID)
+	applyTransaction(m, latest)
+	diags.Append(r.resolveStackTemplate(ctx, m)...)
+	diags.AddWarning("Nothing was pending, so nothing was submitted",
+		fmt.Sprintf("No changes were staged for %s under this token's identity. The resource records "+
+			"transaction %s, the most recent one deployed, and no new deployment was started.",
+			rootScope, latest.ID))
+	return diags
 }
 
 func (r *controlSubmissionResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {

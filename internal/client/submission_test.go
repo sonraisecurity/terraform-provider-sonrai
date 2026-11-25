@@ -319,3 +319,37 @@ func TestDeployedTemplateLocationFailsAtThePageCap(t *testing.T) {
 		t.Errorf("made %d requests, want %d", calls, deployedTemplateMaxPages)
 	}
 }
+
+func TestLatestCompletedTransactionSkipsUnfinished(t *testing.T) {
+	c := clientReturning(t, `{"data":{"ControlTransactions":{"items":[
+		{"transactionId":"running","status":"DEPLOY_STARTED","rootScope":"aws/r-abcd"},
+		{"transactionId":"failed","status":"FAILED","rootScope":"aws/r-abcd"},
+		{"transactionId":"jit","status":"Completed","rootScope":"aws/r-abcd","templateLocation":""},
+		{"transactionId":"older","status":"COMPLETED","rootScope":"aws/r-abcd"}]}}}`, nil)
+
+	got, err := c.LatestCompletedTransaction(context.Background(), "aws/r-abcd")
+	if err != nil {
+		t.Fatalf("LatestCompletedTransaction: %v", err)
+	}
+	// A completed transaction with no template still counts: it is the one in
+	// force, whether or not it changed the template.
+	if got.ID != "jit" {
+		t.Errorf("got %q, want the newest completed transaction", got.ID)
+	}
+}
+
+func TestLatestCompletedTransactionNoneIsNotFound(t *testing.T) {
+	c := clientReturning(t, `{"data":{"ControlTransactions":{"items":[
+		{"transactionId":"failed","status":"FAILED","rootScope":"aws/r-abcd"}]}}}`, nil)
+	if _, err := c.LatestCompletedTransaction(context.Background(), "aws/r-abcd"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestLatestCompletedTransactionRejectsAnotherRoot(t *testing.T) {
+	c := clientReturning(t, `{"data":{"ControlTransactions":{"items":[
+		{"transactionId":"x","status":"COMPLETED","rootScope":"aws/r-other"}]}}}`, nil)
+	if _, err := c.LatestCompletedTransaction(context.Background(), "aws/r-abcd"); err == nil {
+		t.Error("a transaction from another root scope must be an error")
+	}
+}

@@ -6,6 +6,7 @@ description: |-
   Submits the control changes staged under a root scope as one transaction.
   Staging resources such as sonrai_account_disabled_service take effect only once submitted. A submission covers every change the token's identity has staged under its root scope, whether or not this configuration staged it, along with changes the platform has queued for the whole organization, such as denies for newly discovered third parties. Changes another user staged are left for that user to submit. Give each configuration its own App identity, use one submission per root scope, and do not run concurrent applies against the same root scope.
   When the submitted changes require it, the transaction produces a CloudFormation template. Deploy it with aws_cloudformation_stack using stack_template_location, or from the console.
+  A submission that finds nothing staged starts no deployment. The resource then records the most recent transaction already deployed, and the apply says so in a warning.
 ---
 
 # sonrai_control_submission (Resource)
@@ -15,6 +16,8 @@ Submits the control changes staged under a root scope as one transaction.
 Staging resources such as `sonrai_account_disabled_service` take effect only once submitted. A submission covers every change the token's identity has staged under its root scope, whether or not this configuration staged it, along with changes the platform has queued for the whole organization, such as denies for newly discovered third parties. Changes another user staged are left for that user to submit. Give each configuration its own App identity, use one submission per root scope, and do not run concurrent applies against the same root scope.
 
 When the submitted changes require it, the transaction produces a CloudFormation template. Deploy it with `aws_cloudformation_stack` using `stack_template_location`, or from the console.
+
+A submission that finds nothing staged starts no deployment. The resource then records the most recent transaction already deployed, and the apply says so in a warning.
 
 ## Example Usage
 
