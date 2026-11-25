@@ -40,13 +40,23 @@ func TestJitConfigurationTypeName(t *testing.T) {
 	}
 }
 
-// TestJitConfigurationScopeForcesReplacement: the platform keys a configuration
-// on its scope, so moving it is a new configuration, not an update.
-func TestJitConfigurationScopeForcesReplacement(t *testing.T) {
+// TestJitConfigurationScopeIsNamedEitherWay: scope stays usable on its own, as
+// 0.1.x configurations have it, and root_scope with resource_id is the
+// alternative. None can be required, or one form would shut out the other.
+func TestJitConfigurationScopeIsNamedEitherWay(t *testing.T) {
 	attrs := jitSchema(t).Attributes
 	scope, ok := attrs["scope"]
-	if !ok || !scope.IsRequired() {
-		t.Fatal("scope must be required")
+	if !ok || !scope.IsOptional() || !scope.IsComputed() {
+		t.Fatal("scope must be optional and computed")
+	}
+	for _, name := range []string{"root_scope", "resource_id"} {
+		attr, ok := attrs[name]
+		if !ok || !attr.IsOptional() || attr.IsComputed() {
+			t.Errorf("%s should be optional and not computed", name)
+		}
+	}
+	if got := len(NewJitConfigurationResource().(resource.ResourceWithConfigValidators).ConfigValidators(context.Background())); got != 2 {
+		t.Errorf("want 2 config validators (one form only, and the id pair together), got %d", got)
 	}
 	for _, name := range []string{"deny_first", "enrolled_entitlements"} {
 		attr, ok := attrs[name]
@@ -206,5 +216,44 @@ func TestEntitlementNestedAttributesHaveNoDefaults(t *testing.T) {
 	}
 	if set.NestedObject.Attributes["auto_pod"].(schema.BoolAttribute).Default != nil {
 		t.Error("auto_pod must not carry a schema default; entitlementDefaults fills it")
+	}
+}
+
+// TestReaddressedOnly: naming the same scope the other way must not stage
+// anything, and any real change must.
+func TestReaddressedOnly(t *testing.T) {
+	ctx := context.Background()
+	set, diags := entitlementsToSet(ctx, []client.JitEntitlement{{Name: "ReadOnly", Type: client.EntitlementPermissionSet}})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	empty, diags := entitlementsToSet(ctx, nil)
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	state := jitConfigurationModel{
+		Scope:        types.StringValue("aws/r-abcd/ou-ab12-cdef3456/123456789012"),
+		DenyFirst:    types.BoolValue(true),
+		Entitlements: set,
+	}
+
+	same := state
+	same.RootScope = types.StringValue("aws/r-abcd")
+	same.ResourceID = types.StringValue("123456789012")
+	if !readdressedOnly(state, same) {
+		t.Error("the same scope named by id should not stage anything")
+	}
+
+	for name, change := range map[string]func(*jitConfigurationModel){
+		"deny_first":    func(m *jitConfigurationModel) { m.DenyFirst = types.BoolValue(false) },
+		"entitlements":  func(m *jitConfigurationModel) { m.Entitlements = empty },
+		"scope":         func(m *jitConfigurationModel) { m.Scope = types.StringValue("aws/r-abcd") },
+		"unknown scope": func(m *jitConfigurationModel) { m.Scope = types.StringUnknown() },
+	} {
+		plan := same
+		change(&plan)
+		if readdressedOnly(state, plan) {
+			t.Errorf("a change to %s must be staged", name)
+		}
 	}
 }

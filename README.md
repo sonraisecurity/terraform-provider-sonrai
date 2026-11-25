@@ -353,8 +353,9 @@ the account had before, recorded in `previous_state`.
 
 ```hcl
 resource "sonrai_jit_configuration" "sandbox" {
-  scope      = "aws/r-abcd/123456789012"
-  deny_first = true
+  root_scope  = "aws/r-abcd"
+  resource_id = "123456789012"
+  deny_first  = true
 
   enrolled_entitlements = [
     { name = "PowerUserAccess" },

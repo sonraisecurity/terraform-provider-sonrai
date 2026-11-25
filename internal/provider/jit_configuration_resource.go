@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"strings"
+
+	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -22,10 +25,12 @@ import (
 )
 
 var (
-	_ resource.Resource                 = (*jitConfigurationResource)(nil)
-	_ resource.ResourceWithConfigure    = (*jitConfigurationResource)(nil)
-	_ resource.ResourceWithImportState  = (*jitConfigurationResource)(nil)
-	_ resource.ResourceWithUpgradeState = (*jitConfigurationResource)(nil)
+	_ resource.Resource                     = (*jitConfigurationResource)(nil)
+	_ resource.ResourceWithConfigure        = (*jitConfigurationResource)(nil)
+	_ resource.ResourceWithImportState      = (*jitConfigurationResource)(nil)
+	_ resource.ResourceWithUpgradeState     = (*jitConfigurationResource)(nil)
+	_ resource.ResourceWithModifyPlan       = (*jitConfigurationResource)(nil)
+	_ resource.ResourceWithConfigValidators = (*jitConfigurationResource)(nil)
 )
 
 type jitConfigurationResource struct {
@@ -38,6 +43,8 @@ func NewJitConfigurationResource() resource.Resource { return &jitConfigurationR
 type jitConfigurationModel struct {
 	ID           types.String `tfsdk:"id"`
 	Scope        types.String `tfsdk:"scope"`
+	RootScope    types.String `tfsdk:"root_scope"`
+	ResourceID   types.String `tfsdk:"resource_id"`
 	DenyFirst    types.Bool   `tfsdk:"deny_first"`
 	Entitlements types.Set    `tfsdk:"enrolled_entitlements"`
 	Pending      types.Bool   `tfsdk:"pending"`
@@ -69,6 +76,9 @@ func (r *jitConfigurationResource) Schema(_ context.Context, _ resource.SchemaRe
 			"Declaring this resource replaces whatever the scope already has: enrolments absent " +
 			"from `enrolled_entitlements` are unenrolled, and `deny_first` takes the value " +
 			"declared here.\n\n" +
+			"Name the scope one of two ways: `root_scope` with `resource_id`, the cloud-native id of " +
+			"an account, organizational unit or root; or `scope`, its full path. The id form follows " +
+			"an account or organizational unit that is moved, where a path has to be edited.\n\n" +
 			"AWS only for now.\n\n" +
 			"Creating this resource *stages* the change. It takes effect only once the pending " +
 			"changes for the containing root scope are submitted and deployed.",
@@ -81,14 +91,41 @@ func (r *jitConfigurationResource) Schema(_ context.Context, _ resource.SchemaRe
 				},
 			},
 			"scope": schema.StringAttribute{
-				MarkdownDescription: "Scope to configure: a root scope such as `aws/r-abcd`, or any " +
-					"scope path beneath it. Enrolments apply to everything under the scope.",
-				Required: true,
+				MarkdownDescription: "Full scope path to configure: a root scope such as `aws/r-abcd`, " +
+					"or any scope path beneath it. Enrolments apply to everything under the scope. " +
+					"Leave it out when using `root_scope` and `resource_id`, and it reports the path " +
+					"they resolved to.",
+				Optional: true,
+				Computed: true,
 				Validators: []validator.String{
+					stringvalidator.LengthAtMost(1024),
 					stringvalidator.RegexMatches(awsScopePattern, "must be an aws/ scope; JIT configuration is AWS only for now"),
 				},
+				// Only a path written in configuration is compared here. One
+				// resolved from resource_id is settled by ModifyPlan.
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.RequiresReplaceIfConfigured(),
+				},
+			},
+			"root_scope": schema.StringAttribute{
+				MarkdownDescription: "Cloud organization root scope, for example `aws/r-abcd`. Used " +
+					"with `resource_id`, in place of `scope`.",
+				Optional: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtMost(1024),
+					stringvalidator.RegexMatches(awsScopePattern, "must be an aws/ scope; JIT configuration is AWS only for now"),
+				},
+			},
+			"resource_id": schema.StringAttribute{
+				MarkdownDescription: "Cloud-native id of what to configure: an account such as " +
+					"`123456789012`, an organizational unit such as `ou-ab12-cdef3456`, or the root " +
+					"itself, such as `r-abcd`. Used with `root_scope`, in place of `scope`. Changing " +
+					"it to an id that resolves somewhere else forces replacement.",
+				Optional: true,
+				Validators: []validator.String{
+					stringvalidator.LengthBetween(1, 256),
+					stringvalidator.RegexMatches(hierarchyResourceIDPattern,
+						"must be a cloud resource id, not a scope path"),
 				},
 			},
 			"deny_first": schema.BoolAttribute{
@@ -221,6 +258,89 @@ func (entitlementDefaults) PlanModifySet(ctx context.Context, req planmodifier.S
 	resp.PlanValue = planned
 }
 
+func (r *jitConfigurationResource) ConfigValidators(context.Context) []resource.ConfigValidator {
+	return []resource.ConfigValidator{
+		resourcevalidator.ExactlyOneOf(path.MatchRoot("scope"), path.MatchRoot("resource_id")),
+		resourcevalidator.RequiredTogether(path.MatchRoot("root_scope"), path.MatchRoot("resource_id")),
+	}
+}
+
+// byID reports whether the configuration names its scope by resource id.
+func (m jitConfigurationModel) byID() bool { return !m.ResourceID.IsNull() }
+
+// targetScope returns the scope path m configures, resolving it when m names
+// the scope by id, and records it on m.
+//
+// Resolving on every operation is what follows an account or organizational
+// unit that was moved: the platform rewrites the stored scope, and a path kept
+// from an earlier run would name somewhere that no longer exists.
+func (r *jitConfigurationResource) targetScope(ctx context.Context, m *jitConfigurationModel) (string, error) {
+	if !m.byID() {
+		return m.Scope.ValueString(), nil
+	}
+	entry, err := r.api.ResolveScope(ctx, m.RootScope.ValueString(), m.ResourceID.ValueString(), "")
+	if err != nil {
+		return "", err
+	}
+	m.Scope = types.StringValue(entry.Scope)
+	return entry.Scope, nil
+}
+
+func diagnoseJitTarget(m jitConfigurationModel, err error) diag.Diagnostics {
+	if m.byID() && isNotFound(err) {
+		var diags diag.Diagnostics
+		diags.AddAttributeError(path.Root("resource_id"), "Not found in the cloud hierarchy",
+			fmt.Sprintf("Nothing with id %q exists under %s. Give the id of an account, organizational "+
+				"unit or the root, without its path.", m.ResourceID.ValueString(), m.RootScope.ValueString()))
+		return diags
+	}
+	return diagnoseAPIError("Unable to resolve scope", err)
+}
+
+// ModifyPlan settles scope when it is named by id.
+//
+// The attributes cannot simply force replacement themselves. Rewriting a
+// configuration from a path to the id of the same account changes
+// root_scope and resource_id and nothing else, and replacing there would
+// clear a JIT configuration only to stage it again. Resolving here lets the
+// plan compare where the configuration lands, which is what replacement
+// should turn on.
+func (r *jitConfigurationResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if r.api == nil || req.Plan.Raw.IsNull() {
+		return
+	}
+	var plan jitConfigurationModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() || !plan.byID() {
+		return
+	}
+
+	resolved := types.StringUnknown()
+	if !plan.RootScope.IsUnknown() && !plan.ResourceID.IsUnknown() {
+		scope, err := r.targetScope(ctx, &plan)
+		if err != nil {
+			resp.Diagnostics.Append(diagnoseJitTarget(plan, err)...)
+			return
+		}
+		resolved = types.StringValue(scope)
+	}
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("scope"), resolved)...)
+
+	if req.State.Raw.IsNull() {
+		return
+	}
+	var state jitConfigurationModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	// An id not known until apply could land anywhere, so it is treated as a
+	// move.
+	if !resolved.Equal(state.Scope) {
+		resp.RequiresReplace = append(resp.RequiresReplace, path.Root("scope"))
+	}
+}
+
 func (r *jitConfigurationResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if api := configureClient(req.ProviderData, &resp.Diagnostics); api != nil {
 		r.api = api
@@ -252,8 +372,11 @@ func (r *jitConfigurationResource) Read(ctx context.Context, req resource.ReadRe
 		return
 	}
 
-	scope := state.Scope.ValueString()
-	cfg, err := r.api.JitConfiguration(ctx, scope)
+	scope, err := r.targetScope(ctx, &state)
+	var cfg *client.JitConfiguration
+	if err == nil {
+		cfg, err = r.api.JitConfiguration(ctx, scope)
+	}
 	if err != nil {
 		if isNotFound(err) {
 			tflog.Info(ctx, "JIT configuration no longer present, removing from state",
@@ -280,9 +403,21 @@ func (r *jitConfigurationResource) Read(ctx context.Context, req resource.ReadRe
 }
 
 func (r *jitConfigurationResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan jitConfigurationModel
+	var plan, state jitConfigurationModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	// Renaming the same scope from a path to an id, or back, changes nothing
+	// on the platform. Staging anyway would move revision and submit a
+	// deployment that deploys nothing.
+	if readdressedOnly(state, plan) {
+		plan.ID = state.ID
+		plan.Scope = state.Scope
+		plan.Pending = state.Pending
+		plan.Revision = state.Revision
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		return
 	}
 	// The mutation replaces the whole configuration, so resending it in full
@@ -295,6 +430,14 @@ func (r *jitConfigurationResource) Update(ctx context.Context, req resource.Upda
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
+// readdressedOnly reports whether plan differs from state only in how the
+// scope is named. ModifyPlan has already resolved an id, so equal scopes here
+// mean the same place.
+func readdressedOnly(state, plan jitConfigurationModel) bool {
+	return !plan.Scope.IsUnknown() && plan.Scope.Equal(state.Scope) &&
+		plan.DenyFirst.Equal(state.DenyFirst) && plan.Entitlements.Equal(state.Entitlements)
+}
+
 func (r *jitConfigurationResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state jitConfigurationModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -302,12 +445,18 @@ func (r *jitConfigurationResource) Delete(ctx context.Context, req resource.Dele
 		return
 	}
 
-	scope := state.Scope.ValueString()
-
 	// Nothing defined at the scope -- already cleared, or the scope itself
 	// gone from the hierarchy -- means there is nothing to stage, and writing
 	// to a vanished scope would fail and strand the resource behind
 	// `terraform state rm`.
+	scope, err := r.targetScope(ctx, &state)
+	if isNotFound(err) {
+		return
+	}
+	if err != nil {
+		resp.Diagnostics.Append(diagnoseJitTarget(state, err)...)
+		return
+	}
 	if _, err := r.api.JitConfiguration(ctx, scope); isNotFound(err) {
 		return
 	}
@@ -332,10 +481,37 @@ func (r *jitConfigurationResource) Delete(ctx context.Context, req resource.Dele
 }
 
 func (r *jitConfigurationResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if !scopePattern.MatchString(req.ID) {
+	// A scope path never contains the separator, so its presence says which
+	// form this is.
+	if rootScope, resourceID, byID := strings.Cut(req.ID, importSeparator); byID {
+		if !awsScopePattern.MatchString(rootScope) || !hierarchyResourceIDPattern.MatchString(resourceID) {
+			resp.Diagnostics.AddError(
+				"Invalid import ID",
+				fmt.Sprintf("Expected %q, for example %q, but got %q.",
+					"root_scope"+importSeparator+"resource_id", "aws/r-abcd"+importSeparator+"123456789012", req.ID),
+			)
+			return
+		}
+		m := jitConfigurationModel{
+			RootScope:  types.StringValue(rootScope),
+			ResourceID: types.StringValue(resourceID),
+		}
+		scope, err := r.targetScope(ctx, &m)
+		if err != nil {
+			resp.Diagnostics.Append(diagnoseJitTarget(m, err)...)
+			return
+		}
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), scope)...)
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("scope"), scope)...)
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("root_scope"), rootScope)...)
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("resource_id"), resourceID)...)
+		return
+	}
+	if !awsScopePattern.MatchString(req.ID) {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
-			fmt.Sprintf("Expected a scope, for example %q, but got %q.", "aws/r-abcd", req.ID),
+			fmt.Sprintf("Expected a scope, for example %q, or %q, but got %q.",
+				"aws/r-abcd", "root_scope"+importSeparator+"resource_id", req.ID),
 		)
 		return
 	}
@@ -353,7 +529,11 @@ func (r *jitConfigurationResource) apply(ctx context.Context, m *jitConfiguratio
 		return false, diags
 	}
 
-	scope := m.Scope.ValueString()
+	scope, err := r.targetScope(ctx, m)
+	if err != nil {
+		diags.Append(diagnoseJitTarget(*m, err)...)
+		return false, diags
+	}
 	denyFirst := m.DenyFirst.ValueBool()
 	tflog.Info(ctx, "staging JIT configuration", map[string]any{
 		"scope": scope, "deny_first": denyFirst, "entitlements": len(entitlements),

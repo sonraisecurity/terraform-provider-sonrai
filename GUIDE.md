@@ -449,8 +449,8 @@ with `import` blocks. Each resource's import ID:
 | `sonrai_account_protected_service` | `control_key@root_scope@resource_id` | `iam@aws/r-abcd@123456789012` |
 | `sonrai_exempted_identity` | `identity@scope`, plus `@sso` for an SSO actor id | `*e/BreakGlass@aws/r-abcd` |
 | `sonrai_region_control` | `region_id@root_scope@resource_id` | `ap-south-1@aws/r-abcd@123456789012` |
-| `sonrai_jit_configuration` | The scope | `aws/r-abcd/123456789012` |
-| `sonrai_approvers` | The scope | `aws/r-abcd/ou-ab12-cdef3456/123456789012` |
+| `sonrai_jit_configuration` | The scope, or `root_scope@resource_id` | `aws/r-abcd/ou-ab12-cdef3456/123456789012`, `aws/r-abcd@123456789012` |
+| `sonrai_approvers` | `root_scope@resource_id` | `aws/r-abcd@123456789012` |
 | `sonrai_control_submission` | The transaction id | `a1b2c3d4-0000-4000-8000-000000000000` |
 | `aws_cloudformation_stack` | The stack name | `SonraiCloudPermissionFirewall` |
 
@@ -778,7 +778,9 @@ Configures Just-in-Time access at a scope. AWS only.
 
 | Attribute | Type | | |
 |---|---|---|---|
-| `scope` | string | required | Scope to configure. Forces replacement. |
+| `root_scope` | string | optional | Cloud organization root scope. Used with `resource_id`. |
+| `resource_id` | string | optional | Id of an account, organizational unit or the root. Used with `root_scope`. |
+| `scope` | string | optional | Full scope path, in place of the two above. Reports the resolved path otherwise. |
 | `deny_first` | bool | optional | Deny every entitlement not enrolled here. Defaults to false. |
 | `enrolled_entitlements` | set(object) | optional | `name`, `type`, `auto_pod`. |
 | `pending` | bool | computed | True while a staged change has not been deployed. |
@@ -806,6 +808,25 @@ resource "sonrai_jit_configuration" "org" {
   ]
 }
 ```
+
+Name the scope one of two ways, never both:
+
+```hcl
+resource "sonrai_jit_configuration" "sandbox" {
+  root_scope  = "aws/r-abcd"
+  resource_id = "123456789012"
+}
+```
+
+- `root_scope` with `resource_id`, the id of an account, an organizational unit
+  or the root. It is resolved to its path on every run, so the configuration
+  follows an account or organizational unit that is moved.
+- `scope`, the full path, as in the example above. A path has to be edited when
+  what it names is moved.
+
+Pointing either form somewhere else replaces the resource. Rewriting a
+configuration from one form to the other for the same scope does not: it plans
+as an in-place change, stages nothing and leaves `revision` alone.
 
 The platform replaces the whole configuration at a scope in one call, so this
 resource is authoritative for the scope it names. An entitlement enrolled from
@@ -970,22 +991,31 @@ deploys them again.
 
 ### `sonrai_approvers`
 
-Sets who approves access requests at a scope, and who is allowed to.
+Sets who approves access requests at an account, organizational unit or root,
+and who is allowed to.
 
 | Attribute | Type | | |
 |---|---|---|---|
-| `scope` | string | required | Scope path of a root, organizational unit or account. Forces replacement. |
+| `root_scope` | string | required | Cloud organization root scope. Forces replacement. |
+| `resource_id` | string | required | Id of an account, organizational unit or the root. Forces replacement. |
+| `scope` | string | computed | Scope path `resource_id` resolved to. |
 | `approvers` | set(string) | required | Email addresses of users and groups, in lower case. May be empty. At most 100. |
 | `approval_type` | string | required | `exclude_self`, `assigned_approvers` or `everyone_at_scope`. |
 | `previous_approval_type` | string | computed | The approval type the scope had before this resource, which destroy restores. |
 
 ```hcl
 resource "sonrai_approvers" "prod" {
-  scope         = "aws/r-abcd/ou-ab12-cdef3456/123456789012"
+  root_scope    = "aws/r-abcd"
+  resource_id   = "123456789012"
   approvers     = ["cloud-approvers@example.com", "amy@example.com"]
   approval_type = "exclude_self"
 }
 ```
+
+Unlike the control resources, `resource_id` also takes an organizational unit
+such as `ou-ab12-cdef3456` or the root itself, such as `r-abcd`. The id is
+resolved to its path on every run, so an account or organizational unit that is
+moved needs no change here.
 
 This is the one resource that does not stage. It takes effect when it is
 applied, it has no `revision`, and it does not belong in a submission's
