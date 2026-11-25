@@ -27,6 +27,7 @@ var (
 	_ resource.Resource                = (*exemptedIdentityResource)(nil)
 	_ resource.ResourceWithConfigure   = (*exemptedIdentityResource)(nil)
 	_ resource.ResourceWithImportState = (*exemptedIdentityResource)(nil)
+	_ resource.ResourceWithModifyPlan  = (*exemptedIdentityResource)(nil)
 )
 
 // exemptionTypeNames maps the configuration spelling to the API's.
@@ -84,6 +85,10 @@ func (r *exemptedIdentityResource) Schema(_ context.Context, _ resource.SchemaRe
 			"still repeated in every statement of every policy for that account.\n\n" +
 			"Patterns are accepted here only. `exempt_identities` on " +
 			"`sonrai_account_protected_service` requires full ARNs.\n\n" +
+			"Kinds can be added to a deployed exemption in place, but not removed from one: the platform " +
+			"merges a change with what is already in force, so a shorter `exempt_from` would deploy and " +
+			"change nothing. A plan that drops a kind from a deployed exemption is rejected. To narrow " +
+			"one, remove the resource and apply, then add it back with the shorter list and apply again.\n\n" +
 			"Creating this resource *stages* the change. It takes effect only once the pending " +
 			"changes for the containing root scope are submitted and deployed.",
 		Attributes: map[string]schema.Attribute{
@@ -231,14 +236,89 @@ func (r *exemptedIdentityResource) Read(ctx context.Context, req resource.ReadRe
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-func (r *exemptedIdentityResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan exemptedIdentityModel
+// ModifyPlan rejects a plan that drops a kind from a deployed exemption.
+//
+// The platform merges a staged change with the exemption already in force, so
+// staging fewer kinds deploys cleanly and removes nothing. Left alone, the
+// apply would succeed, the kind would stay exempt, and every later plan would
+// propose the same change again.
+func (r *exemptedIdentityResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if r.api == nil || req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+		return
+	}
+	var plan, state exemptedIdentityModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// Only exempt_from can reach here; everything else forces replacement. The
-	// mutation carries every type on each call, so restaging is the update.
+	resp.Diagnostics.Append(r.rejectNarrowing(ctx, state, plan)...)
+}
+
+// rejectNarrowing returns an error when plan drops kinds that state has and
+// the exemption is deployed. One that is only staged has nothing in force to
+// merge with, so it can still be changed freely.
+func (r *exemptedIdentityResource) rejectNarrowing(ctx context.Context, state, plan exemptedIdentityModel) diag.Diagnostics {
+	var diags diag.Diagnostics
+	// A replacement removes the old exemption outright; nothing is merged.
+	if plan.ExemptFrom.IsUnknown() || !plan.Scope.Equal(state.Scope) ||
+		!plan.Identity.Equal(state.Identity) || !plan.SSO.Equal(state.SSO) {
+		return diags
+	}
+	before, d := setToStrings(ctx, state.ExemptFrom)
+	diags.Append(d...)
+	after, d := setToStrings(ctx, plan.ExemptFrom)
+	diags.Append(d...)
+	if diags.HasError() {
+		return diags
+	}
+	dropped := difference(before, after)
+	if len(dropped) == 0 {
+		return diags
+	}
+
+	scope := state.Scope.ValueString()
+	identity := state.Identity.ValueString()
+	deployed, err := r.api.ExemptedIdentityDeployed(ctx, scope, identity, state.SSO.ValueBool())
+	if err != nil {
+		diags.Append(diagnoseAPIError("Unable to read exempted identity", err)...)
+		return diags
+	}
+	if !deployed {
+		return diags
+	}
+	diags.AddAttributeError(path.Root("exempt_from"), narrowingSummary, narrowingDetail(identity, scope, dropped))
+	return diags
+}
+
+const narrowingSummary = "Kinds cannot be removed from a deployed exemption in place"
+
+func narrowingDetail(identity, scope string, dropped []string) string {
+	return fmt.Sprintf("%s is exempt from %s at %s, and this plan would drop %s. The platform merges a "+
+		"change to an exemption with what is already deployed, so staging a shorter list deploys "+
+		"without removing anything.\n\n"+
+		"To narrow the exemption, remove this resource and apply, then add it back with the shorter "+
+		"exempt_from and apply again. The identity is not exempt from anything at this scope between "+
+		"the two applies.\n\n"+
+		"If %s was added outside Terraform and should stay, add it to exempt_from instead.",
+		identity, strings.Join(dropped, ", "), scope, strings.Join(dropped, ", "),
+		strings.Join(dropped, ", "))
+}
+
+func (r *exemptedIdentityResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state exemptedIdentityModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	// ModifyPlan cannot check an exempt_from that was unknown while planning.
+	resp.Diagnostics.Append(r.rejectNarrowing(ctx, state, plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	// Only exempt_from can reach here; everything else forces replacement, and
+	// a deployed exemption only ever gains kinds here.
 	resp.Diagnostics.Append(r.stage(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return

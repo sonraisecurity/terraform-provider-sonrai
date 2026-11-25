@@ -752,7 +752,23 @@ resource "sonrai_exempted_identity" "break_glass" {
 ```
 
 The platform holds one entry per identity at a scope, so `exempt_from` carries
-every kind at once; kinds left out are turned off. Scopes are exact: an
+every kind at once.
+
+Kinds can be added to a deployed exemption in place, but not removed from one.
+The platform merges a change with the exemption already in force, so a shorter
+`exempt_from` would deploy cleanly and remove nothing. A plan that drops a kind
+from a deployed exemption is rejected, with the kinds named. To narrow one:
+
+1. Remove the resource from the configuration and apply. The removal is
+   submitted and deployed.
+2. Add it back with the shorter `exempt_from` and apply again.
+
+The identity is not exempt from anything at that scope between the two applies.
+The same applies when a kind was added outside Terraform: either add it to
+`exempt_from` to keep it, or narrow the exemption in those two steps. An
+exemption that has only been staged, and never deployed, can be changed freely.
+
+Scopes are exact: an
 exemption defined at a root scope is in force in every account under it but
 belongs to the root, and is not readable as an entry at the account.
 

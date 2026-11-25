@@ -137,8 +137,12 @@ func (c controlExemptions) anyPending() bool {
 	return false
 }
 
-// StageExemptedIdentity stages identity as exempt from exactly the given types
-// at scope. Types not listed are staged off.
+// StageExemptedIdentity stages identity as exempt from the given types at scope.
+//
+// For an identity with no exemption deployed, those are exactly its types. For
+// one that has, the platform adds them to the deployed set: a type left out
+// here stays exempt. Narrowing a deployed exemption takes a removal, a deploy,
+// and a fresh staging.
 //
 // The platform allows one staged entry per identity, so every type travels in
 // a single call; staging a second time for the same identity is refused with

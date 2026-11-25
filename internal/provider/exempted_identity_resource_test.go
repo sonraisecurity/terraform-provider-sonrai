@@ -150,3 +150,27 @@ func TestJitConfigurationWarnsItReplaces(t *testing.T) {
 		t.Error("the schema should warn that declaring the resource replaces the scope's configuration")
 	}
 }
+
+// TestExemptedIdentityStatesNarrowingIsRejected: dropping a kind from a deployed
+// exemption used to apply cleanly and change nothing. The schema has to say
+// that it is refused, and how to narrow one instead.
+func TestExemptedIdentityStatesNarrowingIsRejected(t *testing.T) {
+	desc := exemptedIdentitySchema(t).MarkdownDescription
+	for _, want := range []string{"not removed from one", "is rejected", "remove the resource and apply"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("the schema description should mention %q", want)
+		}
+	}
+}
+
+func TestNarrowingDetailNamesWhatIsDroppedAndTheWayOut(t *testing.T) {
+	detail := narrowingDetail("*e/BreakGlass", "aws/r-abcd", []string{"jit", "service_protect"})
+	for _, want := range []string{
+		"*e/BreakGlass", "aws/r-abcd", "jit, service_protect",
+		"remove this resource and apply", "add it to exempt_from instead",
+	} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("detail is missing %q:\n%s", want, detail)
+		}
+	}
+}
