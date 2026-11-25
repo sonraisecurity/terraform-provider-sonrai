@@ -3,7 +3,7 @@
 page_title: "sonrai_approvers Resource - sonrai"
 subcategory: ""
 description: |-
-  Sets who approves access requests at a scope, and who is allowed to.
+  Sets who approves access requests at an account, organizational unit or root, and who is allowed to.
   The resource is authoritative for the approvers assigned at its scope: any assigned there and left out of approvers are removed. Approvers a scope inherits from its parents are not affected and are not listed. A scope that already has approvers of its own is rejected rather than adopted; import it instead.
   Unlike the control resources, this takes effect as soon as it is applied. Nothing is staged and no sonrai_control_submission is involved.
   ~> Approver exceptions are removed. Conditional approver rules set on the scope in the console are not managed by this resource yet, and the platform deletes them whenever the scope's approvers are written. Every apply that creates, changes or destroys this resource removes them, and the apply warns when it does.
@@ -12,7 +12,7 @@ description: |-
 
 # sonrai_approvers (Resource)
 
-Sets who approves access requests at a scope, and who is allowed to.
+Sets who approves access requests at an account, organizational unit or root, and who is allowed to.
 
 The resource is authoritative for the approvers assigned at its scope: any assigned there and left out of `approvers` are removed. Approvers a scope inherits from its parents are not affected and are not listed. A scope that already has approvers of its own is rejected rather than adopted; import it instead.
 
@@ -28,7 +28,8 @@ Unlike the control resources, this takes effect as soon as it is applied. Nothin
 # Approvers for one account. Takes effect when applied: nothing is staged, and
 # no sonrai_control_submission is involved.
 resource "sonrai_approvers" "prod" {
-  scope = "aws/r-abcd/ou-ab12-cdef3456/123456789012"
+  root_scope  = "aws/r-abcd"
+  resource_id = "123456789012"
 
   # Users or groups, by email address, in lower case. An address that is not
   # yet a Sonrai user is sent an invite.
@@ -42,8 +43,10 @@ resource "sonrai_approvers" "prod" {
 }
 
 # Anyone may approve at the sandbox OU, so it needs no approvers of its own.
+# resource_id takes an organizational unit or the root as well as an account.
 resource "sonrai_approvers" "sandbox" {
-  scope         = "aws/r-abcd/ou-ab12-sandbox1"
+  root_scope    = "aws/r-abcd"
+  resource_id   = "ou-ab12-sandbox1"
   approvers     = []
   approval_type = "everyone_at_scope"
 }
@@ -62,12 +65,14 @@ resource "sonrai_approvers" "sandbox" {
 
 The platform also writes this to every scope beneath this one that has no approvers of its own, so a `sonrai_approvers` on such a scope will report the change as drift.
 - `approvers` (Set of String) Email addresses of the users and groups that approve requests at this scope, in lower case. May be empty, which leaves the scope to the approvers it inherits. At most 100.
-- `scope` (String) Scope path to set approvers at: a root scope such as `aws/r-abcd`, an organizational unit, or an account such as `aws/r-abcd/ou-ab12-cdef3456/123456789012`.
+- `resource_id` (String) Cloud-native id of what to set approvers at: an account such as `123456789012`, an organizational unit such as `ou-ab12-cdef3456`, or the root itself, such as `r-abcd`. Give ids bare. Unlike the control resources, organizational units and roots are accepted here.
+- `root_scope` (String) Cloud organization root scope, for example `aws/r-abcd`.
 
 ### Read-Only
 
-- `id` (String) Same as `scope`.
+- `id` (String) Identifier of the form `root_scope@resource_id`.
 - `previous_approval_type` (String) The approval type the scope had before this resource, which destroy restores. Empty after an import, in which case destroy leaves the approval type as it is.
+- `scope` (String) Canonical scope path `resource_id` resolved to, recomputed on every read.
 
 ## Import
 
@@ -76,17 +81,18 @@ Import is supported using the following syntax:
 In Terraform v1.5.0 and later, the [`import` block](https://developer.hashicorp.com/terraform/language/import) can be used with the `id` attribute, for example:
 
 ```terraform
-# Import ID: the scope. The resource is authoritative for the approvers assigned
-# there, so list every one of them or the next apply removes the rest.
+# Import ID: root_scope@resource_id. The resource is authoritative for the
+# approvers assigned there, so list every one of them or the next apply removes
+# the rest.
 import {
   to = sonrai_approvers.prod
-  id = "aws/r-abcd/ou-ab12-cdef3456/123456789012"
+  id = "aws/r-abcd@123456789012"
 }
 ```
 
 The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
-# Import ID: the scope.
-terraform import sonrai_approvers.prod 'aws/r-abcd/ou-ab12-cdef3456/123456789012'
+# Import ID: root_scope@resource_id.
+terraform import sonrai_approvers.prod 'aws/r-abcd@123456789012'
 ```

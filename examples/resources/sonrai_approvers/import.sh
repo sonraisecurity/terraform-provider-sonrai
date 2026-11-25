@@ -1,2 +1,2 @@
-# Import ID: the scope.
-terraform import sonrai_approvers.prod 'aws/r-abcd/ou-ab12-cdef3456/123456789012'
+# Import ID: root_scope@resource_id.
+terraform import sonrai_approvers.prod 'aws/r-abcd@123456789012'

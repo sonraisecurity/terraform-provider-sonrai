@@ -41,6 +41,10 @@ var approverEmailPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._%+'-]*@[a-z0-9]
 // segments, no whitespace, no trailing slash.
 var approverScopePattern = regexp.MustCompile(`^(aws|gcp|azure)(/[A-Za-z0-9|._:-]+)+$`)
 
+// The id of an account, organizational unit, root or their GCP and Azure
+// equivalents. No "@", which separates the parts of an import id.
+var hierarchyResourceIDPattern = regexp.MustCompile(`^[A-Za-z0-9|._:/-]+$`)
+
 type approversResource struct {
 	api *client.Client
 }
@@ -50,6 +54,8 @@ func NewApproversResource() resource.Resource { return &approversResource{} }
 
 type approversModel struct {
 	ID                   types.String `tfsdk:"id"`
+	RootScope            types.String `tfsdk:"root_scope"`
+	ResourceID           types.String `tfsdk:"resource_id"`
 	Scope                types.String `tfsdk:"scope"`
 	Approvers            types.Set    `tfsdk:"approvers"`
 	ApprovalType         types.String `tfsdk:"approval_type"`
@@ -62,7 +68,8 @@ func (r *approversResource) Metadata(_ context.Context, req resource.MetadataReq
 
 func (r *approversResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Sets who approves access requests at a scope, and who is allowed to.\n\n" +
+		MarkdownDescription: "Sets who approves access requests at an account, organizational unit or " +
+			"root, and who is allowed to.\n\n" +
 			"The resource is authoritative for the approvers assigned at its scope: any assigned there " +
 			"and left out of `approvers` are removed. Approvers a scope inherits from its parents are " +
 			"not affected and are not listed. A scope that already has approvers of its own is rejected " +
@@ -78,16 +85,15 @@ func (r *approversResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"`CloudPermissionFirewallApprover`. Neither is undone when the approver is removed here.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
-				MarkdownDescription: "Same as `scope`.",
+				MarkdownDescription: "Identifier of the form `root_scope@resource_id`.",
 				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"scope": schema.StringAttribute{
-				MarkdownDescription: "Scope path to set approvers at: a root scope such as `aws/r-abcd`, " +
-					"an organizational unit, or an account such as `aws/r-abcd/ou-ab12-cdef3456/123456789012`.",
-				Required: true,
+			"root_scope": schema.StringAttribute{
+				MarkdownDescription: "Cloud organization root scope, for example `aws/r-abcd`.",
+				Required:            true,
 				Validators: []validator.String{
 					stringvalidator.LengthAtMost(1024),
 					stringvalidator.RegexMatches(approverScopePattern,
@@ -95,6 +101,28 @@ func (r *approversResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"resource_id": schema.StringAttribute{
+				MarkdownDescription: "Cloud-native id of what to set approvers at: an account such as " +
+					"`123456789012`, an organizational unit such as `ou-ab12-cdef3456`, or the root " +
+					"itself, such as `r-abcd`. Give ids bare. Unlike the control resources, " +
+					"organizational units and roots are accepted here.",
+				Required: true,
+				Validators: []validator.String{
+					stringvalidator.LengthBetween(1, 256),
+					stringvalidator.RegexMatches(hierarchyResourceIDPattern,
+						"must be a cloud resource id, not a scope path or an email address"),
+				},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"scope": schema.StringAttribute{
+				MarkdownDescription: "Canonical scope path `resource_id` resolved to, recomputed on every read.",
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"approvers": schema.SetAttribute{
@@ -147,13 +175,17 @@ func (r *approversResource) Create(ctx context.Context, req resource.CreateReque
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	scope := plan.Scope.ValueString()
-
-	// Also what catches a scope that does not exist: the platform accepts an
-	// empty approver list for an unknown scope and changes nothing.
+	// Resolving is also what catches a target that does not exist: the
+	// platform accepts an empty approver list for an unknown scope and changes
+	// nothing.
+	scope, err := r.resolve(ctx, &plan)
+	if err != nil {
+		resp.Diagnostics.Append(diagnoseApproverTarget(plan, err)...)
+		return
+	}
 	before, err := r.api.ScopeApprovers(ctx, scope)
 	if err != nil {
-		resp.Diagnostics.Append(diagnoseApproverScope("Unable to read approvers", scope, err)...)
+		resp.Diagnostics.Append(diagnoseApproverTarget(plan, err)...)
 		return
 	}
 
@@ -162,10 +194,10 @@ func (r *approversResource) Create(ctx context.Context, req resource.CreateReque
 	// never set. The same rule as the control resources.
 	if len(before.Emails) > 0 {
 		resp.Diagnostics.AddAttributeError(
-			path.Root("scope"),
+			path.Root("resource_id"),
 			"Scope already has approvers",
 			fmt.Sprintf("%s already has %s assigned. Import the existing approvers instead: "+
-				"terraform import <address> '%s'", scope, strings.Join(before.Emails, ", "), scope),
+				"terraform import <address> '%s'", scope, strings.Join(before.Emails, ", "), approversID(plan)),
 		)
 		return
 	}
@@ -184,12 +216,15 @@ func (r *approversResource) Read(ctx context.Context, req resource.ReadRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	scope := state.Scope.ValueString()
-
-	current, err := r.api.ScopeApprovers(ctx, scope)
+	scope, err := r.resolve(ctx, &state)
+	var current *client.ScopeApprovers
+	if err == nil {
+		current, err = r.api.ScopeApprovers(ctx, scope)
+	}
 	if err != nil {
 		if isNotFound(err) {
-			tflog.Info(ctx, "scope no longer present, removing approvers from state", map[string]any{"scope": scope})
+			tflog.Info(ctx, "scope no longer present, removing approvers from state",
+				map[string]any{"resource_id": state.ResourceID.ValueString()})
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -202,7 +237,7 @@ func (r *approversResource) Read(ctx context.Context, req resource.ReadRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	state.ID = types.StringValue(scope)
+	state.ID = types.StringValue(approversID(state))
 	state.Approvers = approvers
 	state.ApprovalType = types.StringValue(approvalTypeName(current.ApprovalType))
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -214,11 +249,14 @@ func (r *approversResource) Update(ctx context.Context, req resource.UpdateReque
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	scope := plan.Scope.ValueString()
-
+	scope, err := r.resolve(ctx, &plan)
+	if err != nil {
+		resp.Diagnostics.Append(diagnoseApproverTarget(plan, err)...)
+		return
+	}
 	before, err := r.api.ScopeApprovers(ctx, scope)
 	if err != nil {
-		resp.Diagnostics.Append(diagnoseApproverScope("Unable to read approvers", scope, err)...)
+		resp.Diagnostics.Append(diagnoseApproverTarget(plan, err)...)
 		return
 	}
 	// The write replaces the whole set, so resending it in full is the update.
@@ -235,9 +273,11 @@ func (r *approversResource) Delete(ctx context.Context, req resource.DeleteReque
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	scope := state.Scope.ValueString()
-
-	before, err := r.api.ScopeApprovers(ctx, scope)
+	scope, err := r.resolve(ctx, &state)
+	var before *client.ScopeApprovers
+	if err == nil {
+		before, err = r.api.ScopeApprovers(ctx, scope)
+	}
 	if err != nil {
 		// A scope that left the hierarchy took its approvers with it.
 		if isNotFound(err) {
@@ -263,17 +303,36 @@ func (r *approversResource) Delete(ctx context.Context, req resource.DeleteReque
 }
 
 func (r *approversResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if !approverScopePattern.MatchString(req.ID) {
+	rootScope, resourceID, ok := strings.Cut(req.ID, importSeparator)
+	if !ok || !approverScopePattern.MatchString(rootScope) || !hierarchyResourceIDPattern.MatchString(resourceID) {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
-			fmt.Sprintf("Expected a scope, for example %q, but got %q.", "aws/r-abcd/123456789012", req.ID),
+			fmt.Sprintf("Expected %q, for example %q, but got %q.",
+				"root_scope"+importSeparator+"resource_id", "aws/r-abcd"+importSeparator+"123456789012", req.ID),
 		)
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("scope"), req.ID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("root_scope"), rootScope)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("resource_id"), resourceID)...)
 	// Known and empty, not null: nothing is recorded to restore on destroy.
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("previous_approval_type"), "")...)
+}
+
+// resolve turns root_scope and resource_id into the scope path and records it
+// on m. Done on every operation, so an account or organizational unit that
+// was moved is followed to its new path.
+func (r *approversResource) resolve(ctx context.Context, m *approversModel) (string, error) {
+	entry, err := r.api.ResolveScope(ctx, m.RootScope.ValueString(), m.ResourceID.ValueString(), "")
+	if err != nil {
+		return "", err
+	}
+	m.Scope = types.StringValue(entry.Scope)
+	return entry.Scope, nil
+}
+
+func approversID(m approversModel) string {
+	return m.RootScope.ValueString() + importSeparator + m.ResourceID.ValueString()
 }
 
 // assign writes the planned approvers and approval type, and fills in the
@@ -297,7 +356,7 @@ func (r *approversResource) assign(ctx context.Context, m *approversModel, excep
 		diags.Append(diagnoseAPIError("Unable to assign approvers", err)...)
 		return diags
 	}
-	m.ID = types.StringValue(scope)
+	m.ID = types.StringValue(approversID(*m))
 	if m.PreviousApprovalType.IsNull() || m.PreviousApprovalType.IsUnknown() {
 		m.PreviousApprovalType = types.StringValue("")
 	}
@@ -324,15 +383,15 @@ func warnExceptionsRemoved(diags *diag.Diagnostics, scope string, exceptions int
 	)
 }
 
-func diagnoseApproverScope(summary, scope string, err error) diag.Diagnostics {
+func diagnoseApproverTarget(m approversModel, err error) diag.Diagnostics {
 	if isNotFound(err) {
 		var diags diag.Diagnostics
-		diags.AddAttributeError(path.Root("scope"), "Scope not found",
-			fmt.Sprintf("%s is not a scope in the cloud hierarchy. Give the full path of a root, "+
-				"organizational unit or account, as the sonrai_scope data source reports it.", scope))
+		diags.AddAttributeError(path.Root("resource_id"), "Not found in the cloud hierarchy",
+			fmt.Sprintf("Nothing with id %q exists under %s. Give the id of an account, organizational "+
+				"unit or the root, without its path.", m.ResourceID.ValueString(), m.RootScope.ValueString()))
 		return diags
 	}
-	return diagnoseAPIError(summary, err)
+	return diagnoseAPIError("Unable to read approvers", err)
 }
 
 // Configuration spells approval types in lower case, like every other

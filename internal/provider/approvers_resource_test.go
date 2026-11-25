@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/sonraisecurity/terraform-provider-sonrai/internal/client"
 )
@@ -27,12 +28,12 @@ func approversSchema(t *testing.T) schema.Schema {
 
 func TestApproversAttributes(t *testing.T) {
 	attrs := approversSchema(t).Attributes
-	for _, name := range []string{"scope", "approvers", "approval_type"} {
+	for _, name := range []string{"root_scope", "resource_id", "approvers", "approval_type"} {
 		if attr, ok := attrs[name]; !ok || !attr.IsRequired() {
 			t.Errorf("%s should be required", name)
 		}
 	}
-	for _, name := range []string{"id", "previous_approval_type"} {
+	for _, name := range []string{"id", "scope", "previous_approval_type"} {
 		attr, ok := attrs[name]
 		if !ok || !attr.IsComputed() || attr.IsRequired() || attr.IsOptional() {
 			t.Errorf("%s should be computed-only", name)
@@ -124,6 +125,29 @@ func TestApproverScopePattern(t *testing.T) {
 		if approverScopePattern.MatchString(scope) {
 			t.Errorf("%q should be rejected", scope)
 		}
+	}
+}
+
+func TestHierarchyResourceIDPattern(t *testing.T) {
+	valid := []string{"123456789012", "ou-ab12-cdef3456", "r-abcd", "projects|my-project", "folders/456"}
+	// A "@" would split an import id in the wrong place.
+	invalid := []string{"", " ", "1234 5678", "amy@example.com", "aws/r-abcd@123456789012", "123456789012\n"}
+	for _, id := range valid {
+		if !hierarchyResourceIDPattern.MatchString(id) {
+			t.Errorf("%q should be accepted", id)
+		}
+	}
+	for _, id := range invalid {
+		if hierarchyResourceIDPattern.MatchString(id) {
+			t.Errorf("%q should be rejected", id)
+		}
+	}
+}
+
+func TestApproversID(t *testing.T) {
+	m := approversModel{RootScope: types.StringValue("aws/r-abcd"), ResourceID: types.StringValue("ou-ab12-cdef3456")}
+	if got, want := approversID(m), "aws/r-abcd@ou-ab12-cdef3456"; got != want {
+		t.Errorf("approversID = %q, want %q", got, want)
 	}
 }
 
