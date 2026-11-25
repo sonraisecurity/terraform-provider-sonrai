@@ -140,6 +140,7 @@ func (p *sonraiProvider) Resources(_ context.Context) []func() resource.Resource
 		NewRegionControlResource,
 		NewControlSubmissionResource,
 		NewControlResetResource,
+		NewApproversResource,
 	}
 }
 

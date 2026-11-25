@@ -43,6 +43,7 @@ an organization's controls lives nowhere you can review or diff.
 | `sonrai_jit_configuration` | Just-in-Time access at a scope |
 | `sonrai_control_submission` | Submission of everything staged under a root scope |
 | `sonrai_control_reset` | Organization-wide rollback of applied controls to staged |
+| `sonrai_approvers` | Who approves access requests at a scope, and who is allowed to |
 
 ### Data sources
 

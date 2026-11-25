@@ -450,6 +450,7 @@ with `import` blocks. Each resource's import ID:
 | `sonrai_exempted_identity` | `identity@scope`, plus `@sso` for an SSO actor id | `*e/BreakGlass@aws/r-abcd` |
 | `sonrai_region_control` | `region_id@root_scope@resource_id` | `ap-south-1@aws/r-abcd@123456789012` |
 | `sonrai_jit_configuration` | The scope | `aws/r-abcd/123456789012` |
+| `sonrai_approvers` | The scope | `aws/r-abcd/ou-ab12-cdef3456/123456789012` |
 | `sonrai_control_submission` | The transaction id | `a1b2c3d4-0000-4000-8000-000000000000` |
 | `aws_cloudformation_stack` | The stack name | `SonraiCloudPermissionFirewall` |
 
@@ -958,6 +959,62 @@ itself.
 Destroying the resource forgets the reset. It does not undo it, and nothing
 needs undoing — the controls it unapplied are staged, and submitting them
 deploys them again.
+
+### `sonrai_approvers`
+
+Sets who approves access requests at a scope, and who is allowed to.
+
+| Attribute | Type | | |
+|---|---|---|---|
+| `scope` | string | required | Scope path of a root, organizational unit or account. Forces replacement. |
+| `approvers` | set(string) | required | Email addresses of users and groups, in lower case. May be empty. At most 100. |
+| `approval_type` | string | required | `exclude_self`, `assigned_approvers` or `everyone_at_scope`. |
+| `previous_approval_type` | string | computed | The approval type the scope had before this resource, which destroy restores. |
+
+```hcl
+resource "sonrai_approvers" "prod" {
+  scope         = "aws/r-abcd/ou-ab12-cdef3456/123456789012"
+  approvers     = ["cloud-approvers@example.com", "amy@example.com"]
+  approval_type = "exclude_self"
+}
+```
+
+This is the one resource that does not stage. It takes effect when it is
+applied, it has no `revision`, and it does not belong in a submission's
+`triggers`.
+
+`approval_type` decides who may approve:
+
+- `exclude_self`: the assigned approvers, but never their own request.
+- `assigned_approvers`: the assigned approvers, their own requests included.
+- `everyone_at_scope`: anyone, their own requests included.
+
+The resource is authoritative for the approvers assigned at its scope. Any
+assigned there and left out of `approvers` are removed. Approvers a scope
+inherits from its parents are not listed and not affected, so an empty
+`approvers` leaves the scope to the ones it inherits. A scope that already has
+approvers of its own is rejected rather than adopted; import it.
+
+Three things happen beyond the scope's own approver list:
+
+- **Approver exceptions are removed.** Conditional approver rules set on the
+  scope in the console are not managed here yet, and the platform deletes them
+  whenever the scope's approvers are written. Every apply that creates, changes
+  or destroys the resource removes them, and warns when it has.
+- **People can be invited and granted a role.** An address that is not yet a
+  Sonrai user is sent an invite, and an approver without an approver role is
+  granted `CloudPermissionFirewallApprover`. Removing the approver later undoes
+  neither.
+- **The approval type is copied down.** The platform also writes it to every
+  scope beneath this one that has no approvers of its own. A `sonrai_approvers`
+  on one of those scopes reports that as drift, so declare the same
+  `approval_type` there or give the scope approvers.
+
+Destroying the resource removes the scope's approvers and restores
+`previous_approval_type`. An imported resource has nothing recorded to restore,
+so destroying it leaves the approval type as it is.
+
+The token's identity needs the `edit.cloudcontrols` permission.
 
 ## Data sources
 
