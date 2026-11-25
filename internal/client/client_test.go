@@ -195,3 +195,25 @@ func TestExecuteSendsVariables(t *testing.T) {
 		t.Errorf("variables = %#v, want controlKey=s3 applyAtScope=true", got)
 	}
 }
+
+// TestHasWrittenTracksMutationsOnly: the submission's pending-changes warning
+// relies on this to tell a plan from the second planning pass Terraform makes
+// mid-apply. A query must not set it, or the warning would never be raised.
+func TestHasWrittenTracksMutationsOnly(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	})
+	var out map[string]any
+	if err := c.Execute(context.Background(), `query q { A { b } }`, nil, &out); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if c.HasWritten() {
+		t.Error("a query must not count as a write")
+	}
+	if err := c.ExecuteOnce(context.Background(), `mutation m { A { b } }`, nil, &out); err != nil {
+		t.Fatalf("mutation: %v", err)
+	}
+	if !c.HasWritten() {
+		t.Error("a mutation must count as a write")
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -36,7 +37,17 @@ type Client struct {
 	pollInterval time.Duration
 	// cache memoizes reads until the first write; see readCache.
 	cache *readCache
+	// wrote records that this client has sent a mutation; see HasWritten.
+	wrote atomic.Bool
 }
+
+// HasWritten reports whether this client has sent any mutation.
+//
+// Terraform plans a resource a second time while applying, in the same
+// provider process that is making the changes. A caller that needs to know
+// what the platform held before this run touched it can only trust what it
+// reads while this is still false.
+func (c *Client) HasWritten() bool { return c.wrote.Load() }
 
 // Config describes how to reach an organization's API.
 type Config struct {
@@ -128,6 +139,7 @@ func (c *Client) execute(ctx context.Context, query string, variables map[string
 	// to cache what the platform held before the write landed.
 	if !isReadOnly(query) {
 		c.cache.disable()
+		c.wrote.Store(true)
 	}
 
 	body, err := json.Marshal(request{Query: query, Variables: variables})

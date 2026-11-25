@@ -197,6 +197,12 @@ func (r *controlSubmissionResource) ModifyPlan(ctx context.Context, req resource
 	if r.api == nil || req.Plan.Raw.IsNull() {
 		return
 	}
+	// Terraform plans this resource again during the apply, after the controls
+	// it depends on have staged. Everything pending then is this run's own
+	// work, and warning about it would bury the warning that matters.
+	if r.api.HasWritten() {
+		return
+	}
 	var plan controlSubmissionModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
