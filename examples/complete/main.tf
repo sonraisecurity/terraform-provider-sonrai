@@ -96,12 +96,32 @@ resource "sonrai_region_control" "this" {
 
 # Authoritative for each scope named: whatever the scope already has is
 # replaced by what is declared here, including enrolments made in the console.
+#
+# Keys are ids, resolved to their path on every run, so an account moved to
+# another organizational unit needs no change here. A key holding a full scope
+# path is passed through as one, which keeps a configuration written before
+# ids were accepted working as it is.
 resource "sonrai_jit_configuration" "this" {
   for_each = var.jit_configurations
 
-  scope                 = each.key
+  scope                 = strcontains(each.key, "/") ? each.key : null
+  root_scope            = strcontains(each.key, "/") ? null : var.root_scope
+  resource_id           = strcontains(each.key, "/") ? null : each.key
   deny_first            = each.value.deny_first
   enrolled_entitlements = each.value.enrolled_entitlements
+}
+
+# Approvers are not staged: this takes effect as soon as it is applied, so it
+# has no revision and stays out of the submission's triggers below. Writing a
+# scope's approvers also removes any approver exceptions set on it in the
+# console.
+resource "sonrai_approvers" "this" {
+  for_each = var.approvers
+
+  root_scope    = var.root_scope
+  resource_id   = each.key
+  approvers     = each.value.approvers
+  approval_type = each.value.approval_type
 }
 
 resource "sonrai_control_submission" "firewall" {
@@ -118,7 +138,7 @@ resource "sonrai_control_submission" "firewall" {
     { for name, r in sonrai_account_protected_service.this : "protected_${name}" => r.revision },
     { for name, r in sonrai_exempted_identity.this : "exempt_${name}" => r.revision },
     { for name, r in sonrai_region_control.this : "region_${name}" => r.revision },
-    { for scope, r in sonrai_jit_configuration.this : "jit_${scope}" => r.revision },
+    { for target, r in sonrai_jit_configuration.this : "jit_${target}" => r.revision },
   )
 
   # Checked before anything is submitted. Getting this wrong leaves a live

@@ -37,9 +37,20 @@ output "regions" {
 
 output "jit" {
   value = {
-    for scope, r in sonrai_jit_configuration.this : scope => {
+    for target, r in sonrai_jit_configuration.this : target => {
+      scope      = r.scope
       deny_first = r.deny_first
       auto_pod   = sort([for e in r.enrolled_entitlements : e.name if e.auto_pod])
+    }
+  }
+}
+
+output "approvers" {
+  value = {
+    for target, r in sonrai_approvers.this : target => {
+      scope         = r.scope
+      approvers     = r.approvers
+      approval_type = r.approval_type
     }
   }
 }

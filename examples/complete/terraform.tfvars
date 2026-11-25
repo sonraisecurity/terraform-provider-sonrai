@@ -34,16 +34,40 @@ region_controls = {
   "123456789012" = { "ap-south-1" = "disabled", "ap-southeast-3" = "disabled" }
 }
 
-# Just-in-Time access, keyed by scope. Each entry is authoritative: it replaces
-# whatever the scope already has, so anything enrolled in the console and not
-# listed here is unenrolled on apply.
+# Just-in-Time access, keyed by id like everything above. An organizational
+# unit id such as ou-ab12-cdef3456 or the root id, r-abcd, works here too, and
+# covers everything beneath it. Each entry is authoritative: it replaces
+# whatever is configured there already, so anything enrolled in the console and
+# not listed here is unenrolled on apply.
 jit_configurations = {
-  "aws/r-abcd/123456789012" = {
+  "123456789012" = {
     deny_first = true
     enrolled_entitlements = [
       { name = "PowerUserAccess" },
       { name = "BreakGlassAccess", type = "AWS_ACCOUNT_ACCESS_ROLE", auto_pod = true },
     ]
+  }
+}
+
+# Who approves access requests, keyed by account, organizational unit or root
+# id. Unlike everything else in this file, approvers are not staged: they take
+# effect on apply, whether or not submit is set.
+#
+# Each entry is authoritative for the approvers assigned there, and a scope
+# that already has approvers is rejected until it is imported. An address that
+# is not yet a Sonrai user is sent an invite. Writing approvers removes any
+# approver exceptions set on that scope in the console.
+approvers = {
+  # One account: these two approve, but never their own request.
+  "123456789012" = {
+    approvers     = ["cloud-approvers@example.com", "amy@example.com"]
+    approval_type = "exclude_self"
+  }
+
+  # An organizational unit where anyone may approve, so it names nobody.
+  "ou-ab12-sandbox1" = {
+    approvers     = []
+    approval_type = "everyone_at_scope"
   }
 }
 

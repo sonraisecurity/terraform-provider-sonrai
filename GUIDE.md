@@ -508,7 +508,13 @@ import {
 import {
   for_each = var.jit_configurations
   to       = sonrai_jit_configuration.this[each.key]
-  id       = each.key
+  id       = strcontains(each.key, "/") ? each.key : "${var.root_scope}@${each.key}"
+}
+
+import {
+  for_each = var.approvers
+  to       = sonrai_approvers.this[each.key]
+  id       = "${var.root_scope}@${each.key}"
 }
 ```
 
@@ -531,6 +537,9 @@ Things to know about imported resources:
   already enrolled there, or the next apply unenrols it.
 - **Protected services** read their exemptions from the platform. Declare the
   same ones, or the next apply changes them.
+- **Approvers** are authoritative for the approvers assigned at their scope.
+  List every one, or the next apply removes the rest. Nothing is recorded to
+  restore, so destroying one leaves the approval type as it is.
 
 ## Troubleshooting
 

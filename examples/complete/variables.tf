@@ -60,7 +60,7 @@ variable "region_controls" {
 }
 
 variable "jit_configurations" {
-  description = "Just-in-Time configuration, keyed by the scope it applies to. Each entry replaces whatever that scope already has."
+  description = "Just-in-Time configuration, keyed by the cloud-native id of the account, organizational unit or root it applies to. Each entry replaces whatever is configured there already. A full scope path is still accepted as a key."
   type = map(object({
     deny_first = optional(bool, false)
     enrolled_entitlements = optional(set(object({
@@ -73,12 +73,33 @@ variable "jit_configurations" {
 
   validation {
     condition = alltrue(flatten([
-      for scope, c in var.jit_configurations : concat(
-        [can(regex("^aws/r-[a-z0-9]+(/[A-Za-z0-9-]+)*$", scope))],
+      for target, c in var.jit_configurations : concat(
+        [can(regex("^([0-9]{12}|ou-[a-z0-9]+-[a-z0-9]+|r-[a-z0-9]+|aws/r-[a-z0-9]+(/[A-Za-z0-9-]+)*)$", target))],
         [for e in c.enrolled_entitlements : contains(["AWS_PERMISSION_SET", "AWS_ACCOUNT_ACCESS_ROLE", "AWS_SAML_ROLE"], e.type)]
       )
     ]))
-    error_message = "Each jit_configurations key must be a scope path such as \"aws/r-abcd/123456789012\", and each entitlement type one of AWS_PERMISSION_SET, AWS_ACCOUNT_ACCESS_ROLE or AWS_SAML_ROLE."
+    error_message = "Each jit_configurations key must be an account id such as \"123456789012\", an organizational unit id such as \"ou-ab12-cdef3456\" or a root id such as \"r-abcd\", and each entitlement type one of AWS_PERMISSION_SET, AWS_ACCOUNT_ACCESS_ROLE or AWS_SAML_ROLE."
+  }
+}
+
+variable "approvers" {
+  description = "Who approves access requests, keyed by the cloud-native id of the account, organizational unit or root. Each entry replaces the approvers assigned there, and takes effect when applied rather than when submitted."
+  type = map(object({
+    approvers     = set(string)
+    approval_type = string
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue(flatten([
+      for target, a in var.approvers : concat(
+        [can(regex("^([0-9]{12}|ou-[a-z0-9]+-[a-z0-9]+|r-[a-z0-9]+)$", target))],
+        [contains(["exclude_self", "assigned_approvers", "everyone_at_scope"], a.approval_type)],
+        [length(a.approvers) <= 100],
+        [for email in a.approvers : email == lower(email)]
+      )
+    ]))
+    error_message = "Each approvers key must be an account, organizational unit or root id; approval_type one of exclude_self, assigned_approvers or everyone_at_scope; and approvers at most 100 email addresses in lower case."
   }
 }
 
