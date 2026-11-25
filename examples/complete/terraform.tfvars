@@ -49,6 +49,25 @@ jit_configurations = {
   }
 }
 
+# Custom controls: named groups of permissions to protect or disable, beyond
+# the services the firewall ships with. They belong to the whole organization
+# and are defined on apply, whether or not submit is set, but protect nothing
+# until protected_services or disabled_services names one, as data_destruction
+# is named below.
+#
+# A name already taken by a control made elsewhere is rejected until it is
+# imported. Editing the permissions of a control that is deployed redeploys it
+# in the same apply. To remove one that is attached, take it out of
+# protected_services and disabled_services and apply, then remove it here and
+# apply again.
+custom_controls = {
+  data_destruction = {
+    title       = "Data Destruction"
+    description = "Deleting buckets, tables and snapshots"
+    permissions = ["s3:DeleteBucket", "dynamodb:DeleteTable", "ec2:DeleteSnapshot"]
+  }
+}
+
 # Who approves access requests, keyed by account, organizational unit or root
 # id. Unlike everything else in this file, approvers are not staged: they take
 # effect on apply, whether or not submit is set.
@@ -128,5 +147,11 @@ protected_services = {
   ec2_210987654321 = {
     resource_id = "210987654321"
     control_key = "ec2"
+  }
+
+  # A custom control, by the name it has in custom_controls above.
+  data_destruction_123456789012 = {
+    resource_id = "123456789012"
+    control_key = "data_destruction"
   }
 }

@@ -25,6 +25,11 @@ locals {
 
   root_id = reverse(split("/", var.root_scope))[0]
 
+  # A control key naming an entry in custom_controls stands for that control's
+  # real key. Going through the resource is also what makes Terraform define
+  # the control before attaching it, and detach it before deleting it.
+  custom_control_keys = { for name, c in sonrai_custom_control.this : name => c.control_key }
+
   # One entry per account and service, keyed "control_key@account_id". Each
   # becomes its own sonrai_account_disabled_service, so a service already
   # disabled outside this configuration is rejected rather than silently taken
@@ -60,12 +65,24 @@ data "sonrai_deploy_account" "firewall" {
 # CloudFormation will fetch the template with.
 data "aws_caller_identity" "current" {}
 
+# A custom control belongs to the whole organization and is defined as soon as
+# it is applied. It protects nothing until protected_services or
+# disabled_services names it, and that part is staged like any other control.
+resource "sonrai_custom_control" "this" {
+  for_each = var.custom_controls
+
+  title       = each.value.title
+  description = each.value.description
+  cloud_type  = each.value.cloud_type
+  permissions = each.value.permissions
+}
+
 resource "sonrai_account_disabled_service" "this" {
   for_each = local.disabled_services
 
   root_scope  = var.root_scope
   resource_id = each.value.resource_id
-  control_key = each.value.control_key
+  control_key = lookup(local.custom_control_keys, each.value.control_key, each.value.control_key)
 }
 
 resource "sonrai_account_protected_service" "this" {
@@ -73,7 +90,7 @@ resource "sonrai_account_protected_service" "this" {
 
   root_scope           = var.root_scope
   resource_id          = each.value.resource_id
-  control_key          = each.value.control_key
+  control_key          = lookup(local.custom_control_keys, each.value.control_key, each.value.control_key)
   exempt_identities    = each.value.exempt_identities
   exempt_sso_actor_ids = each.value.exempt_sso_actor_ids
 }
@@ -141,6 +158,9 @@ resource "sonrai_control_submission" "firewall" {
     { for name, r in sonrai_exempted_identity.this : "exempt_${name}" => r.revision },
     { for name, r in sonrai_region_control.this : "region_${name}" => r.revision },
     { for target, r in sonrai_jit_configuration.this : "jit_${target}" => r.revision },
+    # Moves when the permissions of a deployed custom control are edited, which
+    # is what redeploys them.
+    { for name, r in sonrai_custom_control.this : "custom_${name}" => r.revision },
   )
 
   # Checked before anything is submitted. Getting this wrong leaves a live

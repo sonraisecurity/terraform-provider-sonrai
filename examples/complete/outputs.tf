@@ -45,6 +45,15 @@ output "jit" {
   }
 }
 
+output "custom_controls" {
+  value = {
+    for name, r in sonrai_custom_control.this : name => {
+      control_key = r.control_key
+      permissions = r.permissions
+    }
+  }
+}
+
 output "approvers" {
   value = {
     for target, r in sonrai_approvers.this : target => {

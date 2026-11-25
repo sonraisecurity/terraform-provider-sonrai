@@ -451,6 +451,7 @@ with `import` blocks. Each resource's import ID:
 | `sonrai_region_control` | `region_id@root_scope@resource_id` | `ap-south-1@aws/r-abcd@123456789012` |
 | `sonrai_jit_configuration` | `root_scope@resource_id` | `aws/r-abcd@123456789012` |
 | `sonrai_approvers` | `root_scope@resource_id` | `aws/r-abcd@123456789012` |
+| `sonrai_custom_control` | `cloud_type:control_key` | `aws:datadestruction` |
 | `sonrai_control_submission` | The transaction id | `a1b2c3d4-0000-4000-8000-000000000000` |
 | `aws_cloudformation_stack` | The stack name | `SonraiCloudPermissionFirewall` |
 
@@ -516,6 +517,12 @@ import {
   to       = sonrai_approvers.this[each.key]
   id       = "${var.root_scope}@${each.key}"
 }
+
+import {
+  for_each = var.custom_controls
+  to       = sonrai_custom_control.this[each.key]
+  id       = "${each.value.cloud_type}:${lower(replace(each.value.title, " ", ""))}"
+}
 ```
 
 Protected services and exempted identities follow the same pattern. Then:
@@ -537,6 +544,8 @@ Things to know about imported resources:
   already enrolled there, or the next apply unenrols it.
 - **Protected services** read their exemptions from the platform. Declare the
   same ones, or the next apply changes them.
+- **Custom controls** are authoritative for their permission list. Write every
+  permission, or the next apply removes the rest and redeploys the control.
 - **Approvers** are authoritative for the approvers assigned at their scope.
   List every one, or the next apply removes the rest. Nothing is recorded to
   restore, so destroying one leaves the approval type as it is.
@@ -1068,6 +1077,106 @@ so destroying it leaves the approval type as it is.
 
 The token's identity needs the `edit.cloudcontrols` permission.
 
+### `sonrai_custom_control`
+
+Defines a custom control: a named group of permissions the firewall can protect
+or block, alongside the services it ships with. AWS and GCP.
+
+| Attribute | Type | | |
+|---|---|---|---|
+| `title` | string | required | Name of the control. A title that gives a different `control_key` forces replacement. |
+| `cloud_type` | string | required | `aws` or `gcp`. Forces replacement. |
+| `description` | string | required | What the control is for. |
+| `permissions` | set(string) | required | The complete list, such as `s3:DeleteBucket`. At most 1000. |
+| `control_key` | string | computed | Key to attach the control by. |
+| `revision` | string | computed | Changes when a deployed control needs redeploying. Reference it in the submission's `triggers`. |
+| `delete_timeout` | string | optional | How long destroy waits for a removal already being deployed. Defaults to `30m`. |
+
+```hcl
+resource "sonrai_custom_control" "data_destruction" {
+  title       = "Data Destruction"
+  cloud_type  = "aws"
+  description = "Deleting buckets, tables and snapshots"
+  permissions = ["s3:DeleteBucket", "dynamodb:DeleteTable", "ec2:DeleteSnapshot"]
+}
+
+resource "sonrai_account_protected_service" "data_destruction" {
+  root_scope  = "aws/r-abcd"
+  resource_id = "123456789012"
+  control_key = sonrai_custom_control.data_destruction.control_key
+}
+```
+
+A custom control belongs to the whole organization, not to a root scope, so it
+takes no `root_scope` or `resource_id`. Defining one is not staged: it exists
+as soon as it is applied. On its own it protects nothing. Attach it to an
+account by giving its `control_key` to `sonrai_account_protected_service` or
+`sonrai_account_disabled_service`, and that part is staged and submitted like
+any other control. Referring to `control_key` through the resource, rather than
+typing the key, is what makes Terraform define the control before attaching it.
+
+**The key comes from the title.** The platform lower-cases the title and
+removes its spaces, so `Data Destruction` becomes `datadestruction`. A control
+cannot be renamed: a title that gives a different key is a different control,
+and replaces this one. A change of case or spacing alone keeps the key and
+renames the control in place. A title that matches a built-in control is
+rejected.
+
+**The plan checks the definition.** Every permission has to exist for
+`cloud_type`, and the plan fails naming any that do not, before anything is
+changed. Case is not significant in a permission; the spelling in the
+configuration is kept. For GCP, use the `service.googleapis.com/resource.verb`
+form.
+
+**An existing control is not adopted.** A name already taken, by a control made
+in the console or by another configuration, is rejected with the command to
+import it. `sonrai_custom_controls` lists what exists.
+
+**Editing one that is not attached** takes effect at once and needs nothing
+deployed.
+
+**Editing the permissions of one that is deployed needs a redeploy.** The
+definition changes at once, but every account it is deployed in keeps enforcing
+the old list until its root scope is submitted and deployed again. `revision`
+moves when that is needed, so with it in the submission's `triggers` the same
+apply redeploys:
+
+```hcl
+resource "sonrai_control_submission" "firewall" {
+  root_scope = "aws/r-abcd"
+  triggers = {
+    protect = sonrai_account_protected_service.data_destruction.revision
+    control = sonrai_custom_control.data_destruction.revision
+  }
+}
+```
+
+The apply warns with every root scope that needs it. A control is shared by the
+organization, so that can include root scopes this configuration does not
+submit; the change waits in their Pending Changes until someone deploys it. If
+an apply stops after the edit and before the submission, `revision` keeps
+moving on each refresh until the redeploy has happened, so the next apply
+submits it. Editing only the description needs no redeploy.
+
+**Destroying one that is attached takes two applies.** The platform will not
+delete a control that is still deployed, and detaching one only takes effect
+once that change is submitted and deployed. A plan that would destroy a
+deployed control is rejected, naming where it is deployed, before anything is
+changed:
+
+1. Remove the control from every account that uses it, keeping this resource,
+   and apply. The detach is submitted and deployed.
+2. Remove this resource and apply again.
+
+The two cannot share an apply. Terraform will not start the submission that
+deploys the detach until the control has been destroyed, and the control cannot
+be destroyed until that submission has finished. Where the control is deployed
+by another configuration, or was attached in the console, it has to be detached
+there. Attachments that were staged and never deployed do not stop a destroy,
+and are discarded with the control.
+
+The token's identity needs permission to edit cloud controls.
+
 ## Data sources
 
 ### `sonrai_scope`
@@ -1186,6 +1295,35 @@ Reads a transaction, optionally waiting for a terminal status.
 | `template_location` | string | computed | |
 
 Reaching a terminal status other than `wait_for` is an error.
+
+### `sonrai_custom_controls`
+
+Lists the custom controls defined in the organization.
+
+| Attribute | Type | | |
+|---|---|---|---|
+| `root_scope` | string | required | Selects the cloud, and the root scope `deployed_scopes` reports on. |
+| `control_keys` | set(string) | computed | Just the keys. |
+| `controls` | list(object) | computed | `control_key`, `title`, `description`, `cloud_type`, `permissions`, `deployed_scopes`. |
+
+```hcl
+data "sonrai_custom_controls" "all" {
+  root_scope = "aws/r-abcd"
+}
+
+output "custom_controls_in_use" {
+  value = {
+    for c in data.sonrai_custom_controls.all.controls : c.control_key => c.deployed_scopes
+    if length(c.deployed_scopes) > 0
+  }
+}
+```
+
+Custom controls belong to the whole organization, so the list includes ones
+made in the console and by other configurations. `deployed_scopes` is where a
+control is deployed under `root_scope`; a control staged at a scope and not yet
+deployed is not listed. Use it to see what exists before defining a control,
+and to find what still has to be detached before destroying one.
 
 ### `sonrai_pending_changes`
 

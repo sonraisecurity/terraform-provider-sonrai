@@ -44,6 +44,7 @@ an organization's controls lives nowhere you can review or diff.
 | `sonrai_control_submission` | Submission of everything staged under a root scope |
 | `sonrai_control_reset` | Organization-wide rollback of applied controls to staged |
 | `sonrai_approvers` | Who approves access requests at a scope, and who is allowed to |
+| `sonrai_custom_control` | A custom control: a named group of permissions to protect or block |
 
 ### Data sources
 
@@ -53,6 +54,7 @@ an organization's controls lives nowhere you can review or diff.
 | `sonrai_deploy_account` | The account a root scope's template deploys into |
 | `sonrai_suggested_exemptions` | Identities the platform would exempt when protecting a service |
 | `sonrai_entitlements` | AWS permission sets, account access roles and SAML roles at a scope |
+| `sonrai_custom_controls` | The custom controls defined in the organization, and where each is deployed |
 | `sonrai_control_transaction` | A submission's progress, optionally waiting for it to finish |
 | `sonrai_pending_changes` | What a submission under a root scope would deploy if it ran now |
 
@@ -548,6 +550,7 @@ Set these in `terraform.tfvars`:
 | `exempted_identities` | map(object) | `{}` | `identity`, `exempt_from`, `sso`, `resource_id` (an account or OU id; omit for the whole organization) |
 | `region_controls` | map(map(string)) | `{}` | Account id => region id => `disabled` or `enabled`, e.g. `"123456789012" = { "ap-south-1" = "disabled" }` |
 | `jit_configurations` | map(object) | `{}` | Keyed by account, OU or root id: `deny_first`, `enrolled_entitlements` (`name`, `type`, `auto_pod`) |
+| `custom_controls` | map(object) | `{}` | Keyed by a name of your choosing: `title`, `description`, `permissions`, `cloud_type`. Use the name as a control key in `protected_services` or `disabled_services` to attach it |
 | `approvers` | map(object) | `{}` | Keyed by account, OU or root id: `approvers`, `approval_type`. Takes effect on apply, without `submit` |
 | `submit` | bool | `false` | Submit the staged changes and deploy the template |
 | `reset` | bool | `false` | Tear the deployment down and return every control to staged |

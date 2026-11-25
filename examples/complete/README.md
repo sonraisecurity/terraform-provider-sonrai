@@ -2,8 +2,8 @@
 
 One root module covering the whole cycle: disable services, protect services
 with exemptions, exempt identities from whole control classes, disable regions,
-configure Just-in-Time access, assign approvers, submit, and deploy the
-resulting CloudFormation template.
+configure Just-in-Time access, define custom controls, assign approvers,
+submit, and deploy the resulting CloudFormation template.
 
 Accounts, organizational units and the root are named by their cloud-native id
 throughout; nothing needs a full scope path. Approvers are the one thing here

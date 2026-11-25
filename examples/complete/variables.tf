@@ -99,6 +99,26 @@ variable "jit_configurations" {
   }
 }
 
+variable "custom_controls" {
+  description = "Custom controls, keyed by a name of your choosing. Each is a named group of permissions that can then be protected or disabled like a service: use the name given here as a control key in protected_services or disabled_services."
+  type = map(object({
+    title       = string
+    description = string
+    permissions = set(string)
+    cloud_type  = optional(string, "aws")
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for c in values(var.custom_controls) :
+      contains(["aws", "gcp"], c.cloud_type) && length(c.permissions) > 0 &&
+      can(regex("^[A-Za-z0-9][A-Za-z0-9 _.-]*$", c.title))
+    ])
+    error_message = "Each custom control needs at least one permission, a cloud_type of aws or gcp, and a title of letters, numbers, spaces, hyphens, underscores and periods."
+  }
+}
+
 variable "approvers" {
   description = "Who approves access requests, keyed by the cloud-native id of the account, organizational unit or root. Each entry replaces the approvers assigned there, and takes effect when applied rather than when submitted."
   type = map(object({
