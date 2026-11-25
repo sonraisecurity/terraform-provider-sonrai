@@ -447,7 +447,7 @@ with `import` blocks. Each resource's import ID:
 |---|---|---|
 | `sonrai_account_disabled_service` | `control_key@root_scope@resource_id` | `cloud9@aws/r-abcd@123456789012` |
 | `sonrai_account_protected_service` | `control_key@root_scope@resource_id` | `iam@aws/r-abcd@123456789012` |
-| `sonrai_exempted_identity` | `identity@scope`, plus `@sso` for an SSO actor id | `*e/BreakGlass@aws/r-abcd` |
+| `sonrai_exempted_identity` | `identity@root_scope@resource_id`, plus `@sso` for an SSO actor id | `*e/BreakGlass@aws/r-abcd@r-abcd` |
 | `sonrai_region_control` | `region_id@root_scope@resource_id` | `ap-south-1@aws/r-abcd@123456789012` |
 | `sonrai_jit_configuration` | `root_scope@resource_id` | `aws/r-abcd@123456789012` |
 | `sonrai_approvers` | `root_scope@resource_id` | `aws/r-abcd@123456789012` |
@@ -617,13 +617,14 @@ patterns:
 including accounts added later.
 
 Use the smallest pattern that names the identity, even when the exemption is
-for one account. `scope` is what limits an exemption to an account. A full ARN
+for one account. `resource_id` is what limits an exemption to an account. A full ARN
 adds nothing but length, and is still repeated in every statement of every
 policy for that account:
 
 ```hcl
 resource "sonrai_exempted_identity" "deploy_robot" {
-  scope       = "aws/r-abcd/123456789012"
+  root_scope  = "aws/r-abcd"
+  resource_id = "123456789012"
   identity    = "*e/DeployRobot"
   exempt_from = ["service_protect"]
 }
@@ -652,7 +653,8 @@ protect. Use one exempted identity with a pattern:
 
 ```hcl
 resource "sonrai_exempted_identity" "iam_admin" {
-  scope       = "aws/r-abcd"
+  root_scope  = "aws/r-abcd"
+  resource_id = "r-abcd"
   identity    = "*e/CrossAccountIAMAdminRole"
   exempt_from = ["service_protect"]
 }
@@ -737,7 +739,9 @@ adopted; import it to manage it. AWS only.
 
 | Attribute | Type | | |
 |---|---|---|---|
-| `scope` | string | required | Scope to define the exemption at. Forces replacement. |
+| `root_scope` | string | required | Cloud organization root scope. |
+| `resource_id` | string | required | Id of the root, an organizational unit or an account. Pointing it somewhere else forces replacement. |
+| `scope` | string | computed | Scope path `resource_id` resolved to. |
 | `identity` | string | required | Smallest pattern that names the identity, such as `*e/BreakGlass`, or SSO actor id when `sso`. Forces replacement. |
 | `sso` | bool | optional | Whether `identity` is an IAM Identity Center user. Defaults to false. Forces replacement. |
 | `exempt_from` | set(string) | required | `service_protect`, `service_block`, `quarantine`, `region_block`, `jit`, `tamper_protect`. |
@@ -754,11 +758,18 @@ entry covers every account (see
 
 ```hcl
 resource "sonrai_exempted_identity" "break_glass" {
-  scope       = "aws/r-abcd"
+  root_scope  = "aws/r-abcd"
+  resource_id = "r-abcd"
   identity    = "*e/BreakGlass"
   exempt_from = ["service_protect", "service_block"]
 }
 ```
+
+`resource_id` says where the exemption is defined. The root's own id, `r-abcd`
+above, exempts across the whole organization; an organizational unit or account
+id limits it to that and everything beneath. The id is resolved to its path on
+every run, so an account or organizational unit that is moved needs no change
+here.
 
 The platform holds one entry per identity at a scope, so `exempt_from` carries
 every kind at once.
@@ -937,6 +948,12 @@ The submission deploys them with everything the plan shows. Clear the ones that
 should not go out, in Pending Changes in the console, before applying. The
 warning cannot see anything staged between the plan and the apply.
 
+A submission that finds nothing staged starts no deployment. That happens when
+`triggers` change without any resource staging anything, such as a trigger
+being renamed. The resource records the most recent transaction already
+deployed, the apply warns that nothing was submitted, and the stack is left as
+it is.
+
 Waiting ends when the transaction reaches a terminal status or produces a
 template, whichever comes first. Use `sonrai_control_transaction` after
 deploying to wait for completion.
@@ -1097,7 +1114,9 @@ account access roles and SAML roles. AWS only.
 
 | Attribute | Type | | |
 |---|---|---|---|
-| `scope` | string | required | Scope to read entitlements at. |
+| `root_scope` | string | required | Cloud organization root scope. |
+| `resource_id` | string | required | Id of an account, organizational unit or the root to read entitlements at. |
+| `scope` | string | computed | Scope path `resource_id` resolved to. |
 | `type` | string | optional | Return only `AWS_PERMISSION_SET`, `AWS_ACCOUNT_ACCESS_ROLE` or `AWS_SAML_ROLE`. |
 | `names` | set(string) | computed | Just the names. |
 | `entitlements` | list(object) | computed | `name`, `type`, `labels`, `user_count`, `user_count_display`. |
@@ -1107,13 +1126,9 @@ nothing without reporting an error, so read them here rather than copying them
 out of the console.
 
 ```hcl
-data "sonrai_scope" "account" {
+data "sonrai_entitlements" "account" {
   root_scope  = "aws/r-abcd"
   resource_id = "123456789012"
-}
-
-data "sonrai_entitlements" "account" {
-  scope = data.sonrai_scope.account.scope
 }
 
 resource "sonrai_jit_configuration" "account" {
@@ -1136,7 +1151,7 @@ null where no count applies, as it does not for a SAML role assigned in the
 identity provider — null is not zero, and `user_count_display` renders it as
 `N/A`.
 
-`scope` matches the scope and everything beneath it. An entitlement that
+Entitlements are read for what `resource_id` names and everything beneath it. An entitlement that
 qualifies as more than one type is reported as the more specific one, account
 access role ahead of SAML role.
 

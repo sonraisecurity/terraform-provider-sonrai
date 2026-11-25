@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -24,9 +25,11 @@ import (
 )
 
 var (
-	_ resource.Resource                = (*exemptedIdentityResource)(nil)
-	_ resource.ResourceWithConfigure   = (*exemptedIdentityResource)(nil)
-	_ resource.ResourceWithImportState = (*exemptedIdentityResource)(nil)
+	_ resource.Resource                     = (*exemptedIdentityResource)(nil)
+	_ resource.ResourceWithConfigure        = (*exemptedIdentityResource)(nil)
+	_ resource.ResourceWithImportState      = (*exemptedIdentityResource)(nil)
+	_ resource.ResourceWithModifyPlan       = (*exemptedIdentityResource)(nil)
+	_ resource.ResourceWithConfigValidators = (*exemptedIdentityResource)(nil)
 )
 
 // exemptionTypeNames maps the configuration spelling to the API's.
@@ -49,6 +52,8 @@ func NewExemptedIdentityResource() resource.Resource { return &exemptedIdentityR
 type exemptedIdentityModel struct {
 	ID         types.String `tfsdk:"id"`
 	Scope      types.String `tfsdk:"scope"`
+	RootScope  types.String `tfsdk:"root_scope"`
+	ResourceID types.String `tfsdk:"resource_id"`
 	Identity   types.String `tfsdk:"identity"`
 	SSO        types.Bool   `tfsdk:"sso"`
 	ExemptFrom types.Set    `tfsdk:"exempt_from"`
@@ -64,8 +69,9 @@ func (r *exemptedIdentityResource) Schema(_ context.Context, _ resource.SchemaRe
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Exempts an identity from whole classes of firewall control at a scope " +
 			"and everything beneath it.\n\n" +
-			"Set `scope` to a root scope to exempt across the whole organization, which is what a " +
-			"break-glass role usually wants. Set it to an account to exempt only there.\n\n" +
+			"Name where the exemption is defined with `root_scope` and `resource_id`. Give the id of " +
+			"the root itself to exempt across the whole organization, which is what a break-glass " +
+			"role usually wants, or the id of an account to exempt only there.\n\n" +
 			"This is not the same as the per-control exemptions on " +
 			"`sonrai_account_protected_service`. Those name identities exempt from one control; this " +
 			"exempts an identity from every control of the listed kinds.\n\n" +
@@ -79,8 +85,8 @@ func (r *exemptedIdentityResource) Schema(_ context.Context, _ resource.SchemaRe
 			"room than `arn:aws:iam::*:role/BreakGlass`, which names the same role. If your role " +
 			"or user names contain `/`, a short pattern can match more than intended; spell out " +
 			"more, such as `*role/BreakGlass`.\n\n" +
-			"Use the smallest pattern that names the identity, even for one account. `scope` is " +
-			"what limits an exemption to an account; a full ARN adds nothing but length, and is " +
+			"Use the smallest pattern that names the identity, even for one account. `resource_id` " +
+			"is what limits an exemption to an account; a full ARN adds nothing but length, and is " +
 			"still repeated in every statement of every policy for that account.\n\n" +
 			"Patterns are accepted here only. `exempt_identities` on " +
 			"`sonrai_account_protected_service` requires full ARNs.\n\n" +
@@ -90,22 +96,45 @@ func (r *exemptedIdentityResource) Schema(_ context.Context, _ resource.SchemaRe
 			"changes for the containing root scope are submitted and deployed.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
-				MarkdownDescription: "Identifier of the form `identity@scope`.",
+				MarkdownDescription: "The identity and the scope path it resolved to, joined by `@`.",
 				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"scope": schema.StringAttribute{
-				MarkdownDescription: "Scope to define the exemption at: a root scope such as " +
-					"`aws/r-abcd` for the whole organization, or a scope path beneath it. A " +
-					"management-account scope is rejected when the change is deployed.",
-				Required: true,
+			"root_scope": schema.StringAttribute{
+				MarkdownDescription: "Cloud organization root scope, for example `aws/r-abcd`.",
+				Optional:            true,
 				Validators: []validator.String{
+					stringvalidator.LengthAtMost(1024),
 					stringvalidator.RegexMatches(awsScopePattern, "must be an aws/ scope; exempted identities are AWS only for now"),
 				},
+			},
+			"resource_id": schema.StringAttribute{
+				MarkdownDescription: "Cloud-native id of where the exemption is defined: the root " +
+					"itself, such as `r-abcd`, for the whole organization, an organizational unit such " +
+					"as `ou-ab12-cdef3456`, or an account such as `123456789012`. Changing it to an id " +
+					"that resolves somewhere else forces replacement. A management account is rejected " +
+					"when the change is deployed.",
+				Optional: true,
+				Validators: []validator.String{
+					stringvalidator.LengthBetween(1, 256),
+					stringvalidator.RegexMatches(hierarchyResourceIDPattern,
+						"must be a cloud resource id, not a scope path"),
+				},
+			},
+			"scope": schema.StringAttribute{
+				MarkdownDescription: "Scope path `resource_id` resolved to.",
+				Optional:            true,
+				Computed:            true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtMost(1024),
+					stringvalidator.RegexMatches(awsScopePattern, "must be an aws/ scope; exempted identities are AWS only for now"),
+				},
+				// Only a path written in configuration is compared here. One
+				// resolved from resource_id is settled by ModifyPlan.
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.RequiresReplaceIfConfigured(),
 				},
 			},
 			"identity": schema.StringAttribute{
@@ -151,6 +180,89 @@ func (r *exemptedIdentityResource) Schema(_ context.Context, _ resource.SchemaRe
 	}
 }
 
+func (r *exemptedIdentityResource) ConfigValidators(context.Context) []resource.ConfigValidator {
+	return []resource.ConfigValidator{
+		resourcevalidator.ExactlyOneOf(path.MatchRoot("scope"), path.MatchRoot("resource_id")),
+		resourcevalidator.RequiredTogether(path.MatchRoot("root_scope"), path.MatchRoot("resource_id")),
+	}
+}
+
+// byID reports whether the configuration names its scope by resource id.
+func (m exemptedIdentityModel) byID() bool { return !m.ResourceID.IsNull() }
+
+// targetScope returns the scope path the exemption is defined at, resolving it
+// when m names the scope by id, and records it on m. Resolved on every
+// operation so that an account or organizational unit that was moved is
+// followed to its new path.
+func (r *exemptedIdentityResource) targetScope(ctx context.Context, m *exemptedIdentityModel) (string, error) {
+	if !m.byID() {
+		return m.Scope.ValueString(), nil
+	}
+	scope, err := scopeByID(ctx, r.api, m.RootScope, m.ResourceID)
+	if err != nil {
+		return "", err
+	}
+	m.Scope = types.StringValue(scope)
+	return scope, nil
+}
+
+// ModifyPlan settles scope when it is named by id, and decides replacement by
+// where the exemption lands. root_scope and resource_id cannot force
+// replacement themselves: rewriting a configuration from a path to the id of
+// the same scope would then remove an exemption only to stage it again.
+func (r *exemptedIdentityResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if r.api == nil || req.Plan.Raw.IsNull() {
+		return
+	}
+	var plan exemptedIdentityModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if plan.byID() {
+		plan.Scope = types.StringUnknown()
+		if !plan.RootScope.IsUnknown() && !plan.ResourceID.IsUnknown() {
+			if _, err := r.targetScope(ctx, &plan); err != nil {
+				resp.Diagnostics.Append(diagnoseScopeByID(plan.RootScope, plan.ResourceID, err)...)
+				return
+			}
+		}
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("scope"), plan.Scope)...)
+	}
+
+	if req.State.Raw.IsNull() {
+		return
+	}
+	var state exemptedIdentityModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	// An id not known until apply could land anywhere, so it is treated as a
+	// move.
+	if plan.byID() && !plan.Scope.Equal(state.Scope) {
+		resp.RequiresReplace = append(resp.RequiresReplace, path.Root("scope"))
+		return
+	}
+	// Left unknown, revision would replace the submission that reads it and
+	// deploy nothing.
+	if exemptionReaddressedOnly(state, plan) {
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("id"), state.ID)...)
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("pending"), state.Pending)...)
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("revision"), state.Revision)...)
+	}
+}
+
+// exemptionReaddressedOnly reports whether plan differs from state only in
+// how the scope is named. Identity and sso are compared because a change to
+// either replaces the resource, which is anything but a no-op.
+func exemptionReaddressedOnly(state, plan exemptedIdentityModel) bool {
+	return !plan.Scope.IsUnknown() && plan.Scope.Equal(state.Scope) &&
+		plan.Identity.Equal(state.Identity) && plan.SSO.Equal(state.SSO) &&
+		plan.ExemptFrom.Equal(state.ExemptFrom)
+}
+
 func (r *exemptedIdentityResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if api := configureClient(req.ProviderData, &resp.Diagnostics); api != nil {
 		r.api = api
@@ -167,14 +279,15 @@ func (r *exemptedIdentityResource) Create(ctx context.Context, req resource.Crea
 	// An identity someone already exempted here is rejected rather than
 	// adopted: recording it would have destroy remove an exemption this
 	// configuration never caused. The same rule as the control resources.
-	scope := plan.Scope.ValueString()
+	scope, err := r.targetScope(ctx, &plan)
+	if err != nil {
+		resp.Diagnostics.Append(diagnoseScopeByID(plan.RootScope, plan.ResourceID, err)...)
+		return
+	}
 	identity := plan.Identity.ValueString()
 	if existing, err := r.api.ExemptedIdentity(ctx, scope, identity, plan.SSO.ValueBool()); err == nil &&
 		len(existing.Types) > 0 {
-		importID := exemptedIdentityID(plan)
-		if plan.SSO.ValueBool() {
-			importID += importSeparator + "sso"
-		}
+		importID := exemptedIdentityImportID(plan)
 		resp.Diagnostics.AddAttributeError(
 			path.Root("identity"),
 			"Identity is already exempted at this scope",
@@ -199,10 +312,12 @@ func (r *exemptedIdentityResource) Read(ctx context.Context, req resource.ReadRe
 		return
 	}
 
-	scope := state.Scope.ValueString()
 	identity := state.Identity.ValueString()
-
-	entry, err := r.api.ExemptedIdentity(ctx, scope, identity, state.SSO.ValueBool())
+	scope, err := r.targetScope(ctx, &state)
+	var entry *client.ExemptedIdentity
+	if err == nil {
+		entry, err = r.api.ExemptedIdentity(ctx, scope, identity, state.SSO.ValueBool())
+	}
 	if err != nil {
 		if isNotFound(err) {
 			tflog.Info(ctx, "exempted identity no longer present, removing from state",
@@ -240,7 +355,16 @@ func (r *exemptedIdentityResource) Update(ctx context.Context, req resource.Upda
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// Only exempt_from can reach here; everything else forces replacement.
+	// Naming the same scope by id instead of by path, or back, changes
+	// nothing on the platform. Staging anyway would move revision and submit a
+	// deployment that deploys nothing.
+	if exemptionReaddressedOnly(state, plan) {
+		plan.ID = state.ID
+		plan.Pending = state.Pending
+		plan.Revision = state.Revision
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		return
+	}
 	resp.Diagnostics.Append(r.stageUpdate(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -255,7 +379,15 @@ func (r *exemptedIdentityResource) Delete(ctx context.Context, req resource.Dele
 		return
 	}
 
-	scope := state.Scope.ValueString()
+	// A scope that left the hierarchy took its exemptions with it.
+	scope, err := r.targetScope(ctx, &state)
+	if isNotFound(err) {
+		return
+	}
+	if err != nil {
+		resp.Diagnostics.Append(diagnoseScopeByID(state.RootScope, state.ResourceID, err)...)
+		return
+	}
 	identity := state.Identity.ValueString()
 	isSSO := state.SSO.ValueBool()
 
@@ -317,43 +449,83 @@ func (r *exemptedIdentityResource) Delete(ctx context.Context, req resource.Dele
 }
 
 func (r *exemptedIdentityResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	identity, scope, sso, err := parseExemptedIdentityImportID(req.ID)
+	target, err := parseExemptedIdentityImportID(req.ID)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
 			fmt.Sprintf("Expected %q with %q appended for an SSO identity, for example %q or %q, but got %q.",
-				"identity"+importSeparator+"scope",
+				"identity"+importSeparator+"root_scope"+importSeparator+"resource_id",
 				importSeparator+"sso",
-				"*e/BreakGlass"+importSeparator+"aws/r-abcd",
-				"someone@example.com"+importSeparator+"aws/r-abcd"+importSeparator+"sso",
+				"*e/BreakGlass"+importSeparator+"aws/r-abcd"+importSeparator+"r-abcd",
+				"someone@example.com"+importSeparator+"aws/r-abcd"+importSeparator+"123456789012"+importSeparator+"sso",
 				req.ID),
 		)
 		return
 	}
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), identity+importSeparator+scope)...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("identity"), identity)...)
+	scope := target.scope
+	if target.resourceID != "" {
+		m := exemptedIdentityModel{
+			RootScope:  types.StringValue(target.rootScope),
+			ResourceID: types.StringValue(target.resourceID),
+		}
+		if scope, err = r.targetScope(ctx, &m); err != nil {
+			resp.Diagnostics.Append(diagnoseScopeByID(m.RootScope, m.ResourceID, err)...)
+			return
+		}
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("root_scope"), target.rootScope)...)
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("resource_id"), target.resourceID)...)
+	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), target.identity+importSeparator+scope)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("identity"), target.identity)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("scope"), scope)...)
 	// Always set, so the default does not read an imported null as a change.
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("sso"), sso)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("sso"), target.sso)...)
 }
 
-// parseExemptedIdentityImportID splits identity@scope[@sso]. The identity may
-// itself contain "@" -- SSO actor ids are often email-shaped -- so the id is
-// parsed from the right, where a scope cannot contain "@".
-func parseExemptedIdentityImportID(id string) (identity, scope string, sso bool, err error) {
+// exemptedIdentityImport is a parsed import id. Exactly one of scope, or
+// rootScope with resourceID, is set.
+type exemptedIdentityImport struct {
+	identity   string
+	scope      string
+	rootScope  string
+	resourceID string
+	sso        bool
+}
+
+// parseExemptedIdentityImportID splits identity@root_scope@resource_id[@sso],
+// or identity@scope[@sso]. The identity may itself contain "@" -- SSO actor
+// ids are often email-shaped -- so the id is parsed from the right, where
+// neither a scope nor a resource id can contain one. A last part that is a
+// scope path marks the second form.
+func parseExemptedIdentityImportID(id string) (exemptedIdentityImport, error) {
+	var out exemptedIdentityImport
 	if suffix := importSeparator + "sso"; strings.HasSuffix(id, suffix) {
-		sso = true
+		out.sso = true
 		id = strings.TrimSuffix(id, suffix)
 	}
-	at := strings.LastIndex(id, importSeparator)
-	if at <= 0 || at == len(id)-1 {
-		return "", "", false, fmt.Errorf("import id %q is not identity%sscope", id, importSeparator)
+	rest, last, ok := cutLast(id, importSeparator)
+	if !ok {
+		return out, fmt.Errorf("import id %q has no %q", id, importSeparator)
 	}
-	identity, scope = id[:at], id[at+1:]
-	if !scopePattern.MatchString(scope) {
-		return "", "", false, fmt.Errorf("import id %q does not end in a scope path", id)
+	if scopePattern.MatchString(last) {
+		out.identity, out.scope = rest, last
+		return out, nil
 	}
-	return identity, scope, sso, nil
+	identity, rootScope, ok := cutLast(rest, importSeparator)
+	if !ok || !scopePattern.MatchString(rootScope) || !hierarchyResourceIDPattern.MatchString(last) {
+		return out, fmt.Errorf("import id %q does not end in a root scope and a resource id", id)
+	}
+	out.identity, out.rootScope, out.resourceID = identity, rootScope, last
+	return out, nil
+}
+
+// cutLast splits s around the last sep, requiring something on both sides.
+func cutLast(s, sep string) (before, after string, ok bool) {
+	at := strings.LastIndex(s, sep)
+	if at <= 0 || at == len(s)-len(sep) {
+		return "", "", false
+	}
+	return s[:at], s[at+len(sep):], true
 }
 
 func (r *exemptedIdentityResource) stage(ctx context.Context, m *exemptedIdentityModel) diag.Diagnostics {
@@ -365,7 +537,11 @@ func (r *exemptedIdentityResource) stage(ctx context.Context, m *exemptedIdentit
 		return diags
 	}
 
-	scope := m.Scope.ValueString()
+	scope, err := r.targetScope(ctx, m)
+	if err != nil {
+		diags.Append(diagnoseScopeByID(m.RootScope, m.ResourceID, err)...)
+		return diags
+	}
 	identity := m.Identity.ValueString()
 	tflog.Info(ctx, "staging exempted identity", map[string]any{
 		"identity": identity, "scope": scope, "types": names,
@@ -396,7 +572,11 @@ func (r *exemptedIdentityResource) stageUpdate(ctx context.Context, m *exemptedI
 		return diags
 	}
 
-	scope := m.Scope.ValueString()
+	scope, err := r.targetScope(ctx, m)
+	if err != nil {
+		diags.Append(diagnoseScopeByID(m.RootScope, m.ResourceID, err)...)
+		return diags
+	}
 	identity := m.Identity.ValueString()
 	tflog.Info(ctx, "updating exempted identity", map[string]any{
 		"identity": identity, "scope": scope, "types": names,
@@ -414,6 +594,20 @@ func (r *exemptedIdentityResource) stageUpdate(ctx context.Context, m *exemptedI
 
 func exemptedIdentityID(m exemptedIdentityModel) string {
 	return m.Identity.ValueString() + importSeparator + m.Scope.ValueString()
+}
+
+// exemptedIdentityImportID is the id to import m with, in whichever form its
+// configuration names the scope.
+func exemptedIdentityImportID(m exemptedIdentityModel) string {
+	id := exemptedIdentityID(m)
+	if m.byID() {
+		id = m.Identity.ValueString() + importSeparator + m.RootScope.ValueString() +
+			importSeparator + m.ResourceID.ValueString()
+	}
+	if m.SSO.ValueBool() {
+		id += importSeparator + "sso"
+	}
+	return id
 }
 
 // apiNames converts configuration spellings to the API's.

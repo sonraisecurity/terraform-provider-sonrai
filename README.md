@@ -303,14 +303,16 @@ them: they are deployed along with everything the plan shows.
 
 ```hcl
 resource "sonrai_exempted_identity" "break_glass" {
-  scope       = "aws/r-abcd"
+  root_scope  = "aws/r-abcd"
+  resource_id = "r-abcd"
   identity    = "*e/BreakGlass"
   exempt_from = ["service_protect", "service_block"]
 }
 ```
 
-Identities are matched as patterns, so one entry covers every account under the
-scope. AWS only.
+`resource_id` is the root's own id here, which exempts across the whole
+organization; give an account or organizational unit id to limit it. Identities
+are matched as patterns, so one entry covers every account beneath. AWS only.
 
 ### ARNs and patterns
 
@@ -318,7 +320,7 @@ Where an identity is given decides whether a pattern is allowed:
 
 | Where | Form |
 |---|---|
-| `sonrai_exempted_identity.identity` | The smallest pattern that names the identity, such as `*e/BreakGlass`, even for a single account: `scope` limits it to the account. |
+| `sonrai_exempted_identity.identity` | The smallest pattern that names the identity, such as `*e/BreakGlass`, even for a single account: `resource_id` limits it to the account. |
 | `sonrai_account_protected_service.exempt_identities` | Full ARN, including the account id. **Patterns are not supported.** |
 | `sonrai_suggested_exemptions.identities` | Always full ARNs, ready for `exempt_identities`. |
 | `exempt_sso_actor_ids`, or `identity` with `sso = true` | The SSO actor id, not an ARN. |
@@ -543,7 +545,7 @@ Set these in `terraform.tfvars`:
 | `root_scope` | string | `aws/r-abcd` | Cloud organization root scope |
 | `disabled_services` | map(set(string)) | `{}` | Account id => control keys to disable, e.g. `"123456789012" = ["cloud9"]` |
 | `protected_services` | map(object) | `{}` | `resource_id`, `control_key`, `exempt_identities`, `exempt_sso_actor_ids` |
-| `exempted_identities` | map(object) | `{}` | `identity`, `exempt_from`, `sso`, `scope` |
+| `exempted_identities` | map(object) | `{}` | `identity`, `exempt_from`, `sso`, `resource_id` (an account or OU id; omit for the whole organization) |
 | `region_controls` | map(map(string)) | `{}` | Account id => region id => `disabled` or `enabled`, e.g. `"123456789012" = { "ap-south-1" = "disabled" }` |
 | `jit_configurations` | map(object) | `{}` | Keyed by account, OU or root id: `deny_first`, `enrolled_entitlements` (`name`, `type`, `auto_pod`) |
 | `approvers` | map(object) | `{}` | Keyed by account, OU or root id: `approvers`, `approval_type`. Takes effect on apply, without `submit` |

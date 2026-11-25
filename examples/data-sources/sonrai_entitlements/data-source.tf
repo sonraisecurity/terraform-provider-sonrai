@@ -1,19 +1,14 @@
-# The data source reads at a scope path, which sonrai_scope finds from the
-# account id.
-data "sonrai_scope" "account" {
+# Everything federated users reach this account through.
+data "sonrai_entitlements" "account" {
   root_scope  = "aws/r-abcd"
   resource_id = "123456789012"
 }
 
-# Everything federated users reach this account through.
-data "sonrai_entitlements" "account" {
-  scope = data.sonrai_scope.account.scope
-}
-
 # Only the account access roles.
 data "sonrai_entitlements" "roles" {
-  scope = data.sonrai_scope.account.scope
-  type  = "AWS_ACCOUNT_ACCESS_ROLE"
+  root_scope  = "aws/r-abcd"
+  resource_id = "123456789012"
+  type        = "AWS_ACCOUNT_ACCESS_ROLE"
 }
 
 # Enrol everything that is not the broadest permission set, which would

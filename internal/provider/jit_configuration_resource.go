@@ -92,9 +92,7 @@ func (r *jitConfigurationResource) Schema(_ context.Context, _ resource.SchemaRe
 			},
 			"scope": schema.StringAttribute{
 				MarkdownDescription: "Scope path `resource_id` resolved to. Enrolments apply to " +
-					"everything under it. Configurations written for 0.1 set this to a full scope " +
-					"path instead of giving `root_scope` and `resource_id`, which still works; new " +
-					"ones should not.",
+					"everything under it.",
 				Optional: true,
 				Computed: true,
 				Validators: []validator.String{
@@ -277,21 +275,17 @@ func (r *jitConfigurationResource) targetScope(ctx context.Context, m *jitConfig
 	if !m.byID() {
 		return m.Scope.ValueString(), nil
 	}
-	entry, err := r.api.ResolveScope(ctx, m.RootScope.ValueString(), m.ResourceID.ValueString(), "")
+	scope, err := scopeByID(ctx, r.api, m.RootScope, m.ResourceID)
 	if err != nil {
 		return "", err
 	}
-	m.Scope = types.StringValue(entry.Scope)
-	return entry.Scope, nil
+	m.Scope = types.StringValue(scope)
+	return scope, nil
 }
 
 func diagnoseJitTarget(m jitConfigurationModel, err error) diag.Diagnostics {
-	if m.byID() && isNotFound(err) {
-		var diags diag.Diagnostics
-		diags.AddAttributeError(path.Root("resource_id"), "Not found in the cloud hierarchy",
-			fmt.Sprintf("Nothing with id %q exists under %s. Give the id of an account, organizational "+
-				"unit or the root, without its path.", m.ResourceID.ValueString(), m.RootScope.ValueString()))
-		return diags
+	if m.byID() {
+		return diagnoseScopeByID(m.RootScope, m.ResourceID, err)
 	}
 	return diagnoseAPIError("Unable to resolve scope", err)
 }
@@ -310,20 +304,20 @@ func (r *jitConfigurationResource) ModifyPlan(ctx context.Context, req resource.
 	}
 	var plan jitConfigurationModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	if resp.Diagnostics.HasError() || !plan.byID() {
+	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	resolved := types.StringUnknown()
-	if !plan.RootScope.IsUnknown() && !plan.ResourceID.IsUnknown() {
-		scope, err := r.targetScope(ctx, &plan)
-		if err != nil {
-			resp.Diagnostics.Append(diagnoseJitTarget(plan, err)...)
-			return
+	if plan.byID() {
+		plan.Scope = types.StringUnknown()
+		if !plan.RootScope.IsUnknown() && !plan.ResourceID.IsUnknown() {
+			if _, err := r.targetScope(ctx, &plan); err != nil {
+				resp.Diagnostics.Append(diagnoseJitTarget(plan, err)...)
+				return
+			}
 		}
-		resolved = types.StringValue(scope)
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("scope"), plan.Scope)...)
 	}
-	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("scope"), resolved)...)
 
 	if req.State.Raw.IsNull() {
 		return
@@ -335,8 +329,16 @@ func (r *jitConfigurationResource) ModifyPlan(ctx context.Context, req resource.
 	}
 	// An id not known until apply could land anywhere, so it is treated as a
 	// move.
-	if !resolved.Equal(state.Scope) {
+	if plan.byID() && !plan.Scope.Equal(state.Scope) {
 		resp.RequiresReplace = append(resp.RequiresReplace, path.Root("scope"))
+		return
+	}
+	// Left unknown, revision would replace the submission that reads it and
+	// deploy nothing.
+	if readdressedOnly(state, plan) {
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("id"), state.ID)...)
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("pending"), state.Pending)...)
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("revision"), state.Revision)...)
 	}
 }
 

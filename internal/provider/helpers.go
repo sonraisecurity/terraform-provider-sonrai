@@ -392,3 +392,25 @@ func ensureRevision(revision *types.String) {
 		*revision = newRevision()
 	}
 }
+
+// scopeByID resolves root_scope and resource_id to a scope path. Unlike
+// resolveAccountScope it accepts organizational units and roots, for the
+// resources that are legitimately set on them.
+func scopeByID(ctx context.Context, api *client.Client, rootScope, resourceID types.String) (string, error) {
+	entry, err := api.ResolveScope(ctx, rootScope.ValueString(), resourceID.ValueString(), "")
+	if err != nil {
+		return "", err
+	}
+	return entry.Scope, nil
+}
+
+func diagnoseScopeByID(rootScope, resourceID types.String, err error) diag.Diagnostics {
+	if isNotFound(err) {
+		var diags diag.Diagnostics
+		diags.AddAttributeError(tfpath.Root("resource_id"), "Not found in the cloud hierarchy",
+			fmt.Sprintf("Nothing with id %q exists under %s. Give the id of an account, organizational "+
+				"unit or the root, without its path.", resourceID.ValueString(), rootScope.ValueString()))
+		return diags
+	}
+	return diagnoseAPIError("Unable to resolve scope", err)
+}

@@ -78,7 +78,7 @@ resource "sonrai_jit_configuration" "sandbox" {
 - `enrolled_entitlements` (Attributes Set) Entitlements enrolled for JIT at this scope. Anything not listed is not enrolled here. Omitting the attribute means "enrol nothing". (see [below for nested schema](#nestedatt--enrolled_entitlements))
 - `resource_id` (String) Cloud-native id of what to configure: an account such as `123456789012`, an organizational unit such as `ou-ab12-cdef3456`, or the root itself, such as `r-abcd`. Changing it to an id that resolves somewhere else forces replacement.
 - `root_scope` (String) Cloud organization root scope, for example `aws/r-abcd`.
-- `scope` (String) Scope path `resource_id` resolved to. Enrolments apply to everything under it. Configurations written for 0.1 set this to a full scope path instead of giving `root_scope` and `resource_id`, which still works; new ones should not.
+- `scope` (String) Scope path `resource_id` resolved to. Enrolments apply to everything under it.
 
 ### Read-Only
 

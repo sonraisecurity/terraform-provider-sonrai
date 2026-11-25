@@ -31,14 +31,31 @@ variable "protected_services" {
 }
 
 variable "exempted_identities" {
-  description = "Identities exempt from whole control classes, keyed by a name of your choosing."
+  description = "Identities exempt from whole control classes, keyed by a name of your choosing. resource_id is the account or organizational unit the exemption is limited to; leave it out to exempt across the whole organization."
   type = map(object({
     identity    = string
     exempt_from = set(string)
     sso         = optional(bool, false)
+    resource_id = optional(string)
     scope       = optional(string)
   }))
   default = {}
+
+  # scope is declared only so that it can be refused. Terraform drops an
+  # attribute an object type does not name, and an entry that lost its scope
+  # that way would quietly become an exemption across the whole organization.
+  validation {
+    condition     = alltrue([for e in values(var.exempted_identities) : e.scope == null])
+    error_message = "exempted_identities entries no longer take scope. Give resource_id, the id of the account or organizational unit, instead."
+  }
+
+  validation {
+    condition = alltrue([
+      for e in values(var.exempted_identities) :
+      e.resource_id == null || can(regex("^([0-9]{12}|ou-[a-z0-9]+-[a-z0-9]+|r-[a-z0-9]+)$", e.resource_id))
+    ])
+    error_message = "resource_id must be an account id such as \"123456789012\", an organizational unit id such as \"ou-ab12-cdef3456\" or a root id such as \"r-abcd\"."
+  }
 }
 
 variable "region_controls" {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/sonraisecurity/terraform-provider-sonrai/internal/client"
 )
@@ -48,7 +49,7 @@ func TestExemptedIdentityReplaceOnIdentityAndScope(t *testing.T) {
 		if !ok {
 			t.Fatalf("missing %s attribute", name)
 		}
-		if name != "sso" && !attr.IsRequired() {
+		if name == "identity" && !attr.IsRequired() {
 			t.Errorf("%s should be required", name)
 		}
 	}
@@ -97,37 +98,86 @@ func TestProviderServesTheExemptedIdentityResource(t *testing.T) {
 
 func TestParseExemptedIdentityImportID(t *testing.T) {
 	cases := map[string]struct {
-		id       string
-		identity string
-		scope    string
-		sso      bool
-		wantErr  bool
+		id      string
+		want    exemptedIdentityImport
+		wantErr bool
 	}{
-		"arn":                  {id: "arn:aws:iam::*:role/BreakGlass@aws/r-abcd", identity: "arn:aws:iam::*:role/BreakGlass", scope: "aws/r-abcd"},
-		"sso suffix":           {id: "someone@example.com@aws/r-abcd@sso", identity: "someone@example.com", scope: "aws/r-abcd", sso: true},
-		"email-shaped non-sso": {id: "someone@example.com@aws/r-abcd", identity: "someone@example.com", scope: "aws/r-abcd"},
-		"nested scope":         {id: "arn:a@aws/r-abcd/ou-1/123456789012", identity: "arn:a", scope: "aws/r-abcd/ou-1/123456789012"},
-		"no separator":         {id: "arn:aws:iam::1:role/x", wantErr: true},
-		"empty identity":       {id: "@aws/r-abcd", wantErr: true},
-		"not a scope":          {id: "arn:a@not-a-scope", wantErr: true},
+		"by id":           {id: "*e/BreakGlass@aws/r-abcd@r-abcd", want: exemptedIdentityImport{identity: "*e/BreakGlass", rootScope: "aws/r-abcd", resourceID: "r-abcd"}},
+		"by id, account":  {id: "arn:a@aws/r-abcd@123456789012", want: exemptedIdentityImport{identity: "arn:a", rootScope: "aws/r-abcd", resourceID: "123456789012"}},
+		"by id, sso":      {id: "someone@example.com@aws/r-abcd@123456789012@sso", want: exemptedIdentityImport{identity: "someone@example.com", rootScope: "aws/r-abcd", resourceID: "123456789012", sso: true}},
+		"by id, email":    {id: "someone@example.com@aws/r-abcd@ou-ab12-cdef3456", want: exemptedIdentityImport{identity: "someone@example.com", rootScope: "aws/r-abcd", resourceID: "ou-ab12-cdef3456"}},
+		"path":            {id: "arn:aws:iam::*:role/BreakGlass@aws/r-abcd", want: exemptedIdentityImport{identity: "arn:aws:iam::*:role/BreakGlass", scope: "aws/r-abcd"}},
+		"path, sso":       {id: "someone@example.com@aws/r-abcd@sso", want: exemptedIdentityImport{identity: "someone@example.com", scope: "aws/r-abcd", sso: true}},
+		"path, email":     {id: "someone@example.com@aws/r-abcd", want: exemptedIdentityImport{identity: "someone@example.com", scope: "aws/r-abcd"}},
+		"path, nested":    {id: "arn:a@aws/r-abcd/ou-1/123456789012", want: exemptedIdentityImport{identity: "arn:a", scope: "aws/r-abcd/ou-1/123456789012"}},
+		"no separator":    {id: "arn:aws:iam::1:role/x", wantErr: true},
+		"empty identity":  {id: "@aws/r-abcd", wantErr: true},
+		"not a scope":     {id: "arn:a@not-a-scope", wantErr: true},
+		"id without root": {id: "arn:a@123456789012", wantErr: true},
+		"empty id":        {id: "arn:a@aws/r-abcd@", wantErr: true},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			identity, scope, sso, err := parseExemptedIdentityImportID(tc.id)
+			got, err := parseExemptedIdentityImportID(tc.id)
 			if tc.wantErr {
 				if err == nil {
-					t.Fatalf("parse(%q) succeeded, want error", tc.id)
+					t.Fatalf("parse(%q) = %+v, want error", tc.id, got)
 				}
 				return
 			}
 			if err != nil {
 				t.Fatalf("parse(%q): %v", tc.id, err)
 			}
-			if identity != tc.identity || scope != tc.scope || sso != tc.sso {
-				t.Errorf("parse(%q) = (%q, %q, %v), want (%q, %q, %v)",
-					tc.id, identity, scope, sso, tc.identity, tc.scope, tc.sso)
+			if got != tc.want {
+				t.Errorf("parse(%q) = %+v, want %+v", tc.id, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestExemptedIdentityImportIDFollowsTheConfiguration: the id suggested when
+// an exemption already exists has to be one the configuration can keep, in
+// the form it names its scope.
+func TestExemptedIdentityImportIDFollowsTheConfiguration(t *testing.T) {
+	byID := exemptedIdentityModel{
+		Identity:   types.StringValue("someone@example.com"),
+		Scope:      types.StringValue("aws/r-abcd/ou-1/123456789012"),
+		RootScope:  types.StringValue("aws/r-abcd"),
+		ResourceID: types.StringValue("123456789012"),
+		SSO:        types.BoolValue(true),
+	}
+	if got, want := exemptedIdentityImportID(byID), "someone@example.com@aws/r-abcd@123456789012@sso"; got != want {
+		t.Errorf("by id: %q, want %q", got, want)
+	}
+	byPath := exemptedIdentityModel{
+		Identity: types.StringValue("*e/BreakGlass"),
+		Scope:    types.StringValue("aws/r-abcd"),
+		SSO:      types.BoolValue(false),
+	}
+	if got, want := exemptedIdentityImportID(byPath), "*e/BreakGlass@aws/r-abcd"; got != want {
+		t.Errorf("by path: %q, want %q", got, want)
+	}
+	for _, id := range []string{exemptedIdentityImportID(byID), exemptedIdentityImportID(byPath)} {
+		if _, err := parseExemptedIdentityImportID(id); err != nil {
+			t.Errorf("%q does not parse back: %v", id, err)
+		}
+	}
+}
+
+// TestScopeIsNamedByIDOrPath: scope has to stay settable for configurations
+// written against 0.1, so none of the three can be required.
+func TestScopeIsNamedByIDOrPath(t *testing.T) {
+	attrs := exemptedIdentitySchema(t).Attributes
+	if scope := attrs["scope"]; !scope.IsOptional() || !scope.IsComputed() {
+		t.Error("scope must be optional and computed")
+	}
+	for _, name := range []string{"root_scope", "resource_id"} {
+		if attr, ok := attrs[name]; !ok || !attr.IsOptional() || attr.IsComputed() {
+			t.Errorf("%s should be optional and not computed", name)
+		}
+	}
+	if got := len(NewExemptedIdentityResource().(resource.ResourceWithConfigValidators).ConfigValidators(context.Background())); got != 2 {
+		t.Errorf("want 2 config validators, got %d", got)
 	}
 }
 

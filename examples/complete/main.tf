@@ -23,6 +23,8 @@ locals {
   # afresh and redeploys.
   deployed = var.submit && !var.reset
 
+  root_id = reverse(split("/", var.root_scope))[0]
+
   # One entry per account and service, keyed "control_key@account_id". Each
   # becomes its own sonrai_account_disabled_service, so a service already
   # disabled outside this configuration is rejected rather than silently taken
@@ -79,7 +81,10 @@ resource "sonrai_account_protected_service" "this" {
 resource "sonrai_exempted_identity" "this" {
   for_each = var.exempted_identities
 
-  scope       = coalesce(each.value.scope, var.root_scope)
+  root_scope = var.root_scope
+  # The root's own id, the last part of its scope, exempts across the whole
+  # organization.
+  resource_id = coalesce(each.value.resource_id, local.root_id)
   identity    = each.value.identity
   sso         = each.value.sso
   exempt_from = each.value.exempt_from

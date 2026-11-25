@@ -323,12 +323,12 @@ func (r *approversResource) ImportState(ctx context.Context, req resource.Import
 // on m. Done on every operation, so an account or organizational unit that
 // was moved is followed to its new path.
 func (r *approversResource) resolve(ctx context.Context, m *approversModel) (string, error) {
-	entry, err := r.api.ResolveScope(ctx, m.RootScope.ValueString(), m.ResourceID.ValueString(), "")
+	scope, err := scopeByID(ctx, r.api, m.RootScope, m.ResourceID)
 	if err != nil {
 		return "", err
 	}
-	m.Scope = types.StringValue(entry.Scope)
-	return entry.Scope, nil
+	m.Scope = types.StringValue(scope)
+	return scope, nil
 }
 
 func approversID(m approversModel) string {
@@ -385,11 +385,7 @@ func warnExceptionsRemoved(diags *diag.Diagnostics, scope string, exceptions int
 
 func diagnoseApproverTarget(m approversModel, err error) diag.Diagnostics {
 	if isNotFound(err) {
-		var diags diag.Diagnostics
-		diags.AddAttributeError(path.Root("resource_id"), "Not found in the cloud hierarchy",
-			fmt.Sprintf("Nothing with id %q exists under %s. Give the id of an account, organizational "+
-				"unit or the root, without its path.", m.ResourceID.ValueString(), m.RootScope.ValueString()))
-		return diags
+		return diagnoseScopeByID(m.RootScope, m.ResourceID, err)
 	}
 	return diagnoseAPIError("Unable to read approvers", err)
 }

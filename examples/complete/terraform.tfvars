@@ -90,12 +90,13 @@ exempted_identities = {
     exempt_from = ["service_block"]
   }
 
-  # Scoped to one account. The scope does the limiting, so the pattern stays
-  # short. scope defaults to root_scope when omitted, as above.
+  # Limited to one account. resource_id does the limiting, so the pattern
+  # stays short. It takes an organizational unit id the same way, and without
+  # it the exemption covers the whole organization, as above.
   deploy_robot = {
     identity    = "*e/DeployRobot"
     exempt_from = ["service_protect"]
-    scope       = "aws/r-abcd/123456789012"
+    resource_id = "123456789012"
   }
 }
 

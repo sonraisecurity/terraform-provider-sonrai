@@ -4,12 +4,12 @@ page_title: "sonrai_exempted_identity Resource - sonrai"
 subcategory: ""
 description: |-
   Exempts an identity from whole classes of firewall control at a scope and everything beneath it.
-  Set scope to a root scope to exempt across the whole organization, which is what a break-glass role usually wants. Set it to an account to exempt only there.
+  Name where the exemption is defined with root_scope and resource_id. Give the id of the root itself to exempt across the whole organization, which is what a break-glass role usually wants, or the id of an account to exempt only there.
   This is not the same as the per-control exemptions on sonrai_account_protected_service. Those name identities exempt from one control; this exempts an identity from every control of the listed kinds.
   An identity already exempted at the scope -- from the console, or by another configuration -- is rejected rather than adopted.
   AWS only for now.
   Identities are matched as patterns, and a pattern is the recommended form: *e/BreakGlass covers that role in every account, including accounts added later. Keep patterns short: each one is repeated across the statements of the size-limited policies the platform deploys, so *e/BreakGlass leaves far more room than arn:aws:iam::*:role/BreakGlass, which names the same role. If your role or user names contain /, a short pattern can match more than intended; spell out more, such as *role/BreakGlass.
-  Use the smallest pattern that names the identity, even for one account. scope is what limits an exemption to an account; a full ARN adds nothing but length, and is still repeated in every statement of every policy for that account.
+  Use the smallest pattern that names the identity, even for one account. resource_id is what limits an exemption to an account; a full ARN adds nothing but length, and is still repeated in every statement of every policy for that account.
   Patterns are accepted here only. exempt_identities on sonrai_account_protected_service requires full ARNs.
   exempt_from is the complete list. Changing it on an existing exemption stages the difference, so a kind taken out of the list is removed when the change is deployed.
   Creating this resource stages the change. It takes effect only once the pending changes for the containing root scope are submitted and deployed.
@@ -19,7 +19,7 @@ description: |-
 
 Exempts an identity from whole classes of firewall control at a scope and everything beneath it.
 
-Set `scope` to a root scope to exempt across the whole organization, which is what a break-glass role usually wants. Set it to an account to exempt only there.
+Name where the exemption is defined with `root_scope` and `resource_id`. Give the id of the root itself to exempt across the whole organization, which is what a break-glass role usually wants, or the id of an account to exempt only there.
 
 This is not the same as the per-control exemptions on `sonrai_account_protected_service`. Those name identities exempt from one control; this exempts an identity from every control of the listed kinds.
 
@@ -29,7 +29,7 @@ AWS only for now.
 
 Identities are matched as **patterns**, and a pattern is the recommended form: `*e/BreakGlass` covers that role in every account, including accounts added later. Keep patterns short: each one is repeated across the statements of the size-limited policies the platform deploys, so `*e/BreakGlass` leaves far more room than `arn:aws:iam::*:role/BreakGlass`, which names the same role. If your role or user names contain `/`, a short pattern can match more than intended; spell out more, such as `*role/BreakGlass`.
 
-Use the smallest pattern that names the identity, even for one account. `scope` is what limits an exemption to an account; a full ARN adds nothing but length, and is still repeated in every statement of every policy for that account.
+Use the smallest pattern that names the identity, even for one account. `resource_id` is what limits an exemption to an account; a full ARN adds nothing but length, and is still repeated in every statement of every policy for that account.
 
 Patterns are accepted here only. `exempt_identities` on `sonrai_account_protected_service` requires full ARNs.
 
@@ -40,30 +40,33 @@ Creating this resource *stages* the change. It takes effect only once the pendin
 ## Example Usage
 
 ```terraform
-# A break-glass role exempt across the whole organization. The identity is
-# matched as a pattern, so one entry covers the role in every account,
+# A break-glass role exempt across the whole organization: resource_id is the
+# root's own id. The identity is matched as a pattern, so one entry covers the role in every account,
 # including accounts added later. Prefer a short pattern: it is repeated across
 # the size-limited policies the platform deploys, so *e/BreakGlass leaves far
 # more room than arn:aws:iam::*:role/BreakGlass, which names the same role.
 resource "sonrai_exempted_identity" "break_glass" {
-  scope       = "aws/r-abcd"
+  root_scope  = "aws/r-abcd"
+  resource_id = "r-abcd"
   identity    = "*e/BreakGlass"
   exempt_from = ["service_protect", "service_block"]
 }
 
 # An IAM Identity Center user rather than an ARN pattern.
 resource "sonrai_exempted_identity" "sso_operator" {
-  scope       = "aws/r-abcd"
+  root_scope  = "aws/r-abcd"
+  resource_id = "r-abcd"
   identity    = "operator@example.com"
   sso         = true
   exempt_from = ["service_block"]
 }
 
-# Scoped to a single account instead of the whole organization. The scope
-# limits it to the account, so the pattern stays as short as ever; a full ARN
+# Limited to a single account instead of the whole organization. resource_id
+# does the limiting, so the pattern stays as short as ever; a full ARN
 # would only add length to every policy statement for this account.
 resource "sonrai_exempted_identity" "deploy_robot" {
-  scope       = "aws/r-abcd/123456789012"
+  root_scope  = "aws/r-abcd"
+  resource_id = "123456789012"
   identity    = "*e/DeployRobot"
   exempt_from = ["service_protect"]
 }
@@ -76,15 +79,17 @@ resource "sonrai_exempted_identity" "deploy_robot" {
 
 - `exempt_from` (Set of String) Control kinds this identity is exempt from: `service_protect`, `service_block`, `quarantine`, `region_block`, `jit`, `tamper_protect`. Kinds left out are off.
 - `identity` (String) Pattern to exempt, as short as will name the identity, such as `*e/BreakGlass`. The SSO actor id when `sso` is true.
-- `scope` (String) Scope to define the exemption at: a root scope such as `aws/r-abcd` for the whole organization, or a scope path beneath it. A management-account scope is rejected when the change is deployed.
 
 ### Optional
 
+- `resource_id` (String) Cloud-native id of where the exemption is defined: the root itself, such as `r-abcd`, for the whole organization, an organizational unit such as `ou-ab12-cdef3456`, or an account such as `123456789012`. Changing it to an id that resolves somewhere else forces replacement. A management account is rejected when the change is deployed.
+- `root_scope` (String) Cloud organization root scope, for example `aws/r-abcd`.
+- `scope` (String) Scope path `resource_id` resolved to.
 - `sso` (Boolean) Whether `identity` is an IAM Identity Center user rather than an ARN pattern. Defaults to false.
 
 ### Read-Only
 
-- `id` (String) Identifier of the form `identity@scope`.
+- `id` (String) The identity and the scope path it resolved to, joined by `@`.
 - `pending` (Boolean) True while this exemption has a staged change that has not been submitted and deployed.
 - `revision` (String) Opaque value that changes every time this resource stages a change. Reference it in the `triggers` of the `sonrai_control_submission` for its root scope, so that anything this resource stages is submitted, including a plan that only reverts a change made outside Terraform.
 
@@ -95,22 +100,24 @@ Import is supported using the following syntax:
 In Terraform v1.5.0 and later, the [`import` block](https://developer.hashicorp.com/terraform/language/import) can be used with the `id` attribute, for example:
 
 ```terraform
-# Import ID: identity@scope, with @sso appended for an SSO actor id.
+# Import ID: identity@root_scope@resource_id, with @sso appended for an SSO
+# actor id.
 import {
   to = sonrai_exempted_identity.break_glass
-  id = "*e/BreakGlass@aws/r-abcd"
+  id = "*e/BreakGlass@aws/r-abcd@r-abcd"
 }
 
 import {
   to = sonrai_exempted_identity.sso_operator
-  id = "breakglass@example.com@aws/r-abcd@sso"
+  id = "operator@example.com@aws/r-abcd@r-abcd@sso"
 }
 ```
 
 The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
-# Import ID: identity@scope, with @sso appended for an SSO actor id.
-terraform import sonrai_exempted_identity.break_glass '*e/BreakGlass@aws/r-abcd'
-terraform import sonrai_exempted_identity.sso_operator 'breakglass@example.com@aws/r-abcd@sso'
+# Import ID: identity@root_scope@resource_id, with @sso appended for an SSO
+# actor id.
+terraform import sonrai_exempted_identity.break_glass '*e/BreakGlass@aws/r-abcd@r-abcd'
+terraform import sonrai_exempted_identity.sso_operator 'operator@example.com@aws/r-abcd@r-abcd@sso'
 ```
