@@ -5,8 +5,9 @@ with exemptions, exempt identities from whole control classes, disable regions,
 configure Just-in-Time access, assign approvers, submit, and deploy the
 resulting CloudFormation template.
 
-Accounts, organizational units and the root are named by their cloud-native id
-throughout; nothing needs a full scope path. Approvers are the one thing here
+Accounts, organizational units and the root are named by their cloud-native
+id. The one exception is an exempted identity limited to part of the
+organization, which takes a scope path. Approvers are the one thing here
 that is not staged: they take effect on apply, whether or not `submit` is set.
 
 Everything is driven from `terraform.tfvars`. Replace the account ids, root

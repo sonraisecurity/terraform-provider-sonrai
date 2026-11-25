@@ -7,7 +7,7 @@ description: |-
   The platform replaces the whole configuration at a scope in one call, so this resource is authoritative for the scope it names. An entitlement enrolled from the console and left out of enrolled_entitlements is unenrolled on the next apply.
   Enrolments inherited from an ancestor scope are reported by the platform but are not managed here. Declare them on the ancestor's own resource.
   Declaring this resource replaces whatever the scope already has: enrolments absent from enrolled_entitlements are unenrolled, and deny_first takes the value declared here.
-  Name the scope one of two ways: root_scope with resource_id, the cloud-native id of an account, organizational unit or root; or scope, its full path. The id form follows an account or organizational unit that is moved, where a path has to be edited.
+  Name what to configure with root_scope and resource_id, the cloud-native id of an account, organizational unit or root. The id is resolved to its scope path on every run, so an account or organizational unit that is moved needs no change here.
   AWS only for now.
   Creating this resource stages the change. It takes effect only once the pending changes for the containing root scope are submitted and deployed.
 ---
@@ -22,7 +22,7 @@ Enrolments inherited from an ancestor scope are reported by the platform but are
 
 Declaring this resource replaces whatever the scope already has: enrolments absent from `enrolled_entitlements` are unenrolled, and `deny_first` takes the value declared here.
 
-Name the scope one of two ways: `root_scope` with `resource_id`, the cloud-native id of an account, organizational unit or root; or `scope`, its full path. The id form follows an account or organizational unit that is moved, where a path has to be edited.
+Name what to configure with `root_scope` and `resource_id`, the cloud-native id of an account, organizational unit or root. The id is resolved to its scope path on every run, so an account or organizational unit that is moved needs no change here.
 
 AWS only for now.
 
@@ -34,8 +34,9 @@ Creating this resource *stages* the change. It takes effect only once the pendin
 # JIT across the whole organization: two entitlements enrolled, everything
 # else denied.
 resource "sonrai_jit_configuration" "org" {
-  scope      = "aws/r-abcd"
-  deny_first = true
+  root_scope  = "aws/r-abcd"
+  resource_id = "r-abcd"
+  deny_first  = true
 
   enrolled_entitlements = [
     {
@@ -53,9 +54,8 @@ resource "sonrai_jit_configuration" "org" {
 # entitlement: protected actions through it need no Permissions on Demand
 # request.
 #
-# Named by account id, which keeps working if the account is moved to another
-# organizational unit. resource_id also takes an organizational unit or the
-# root; scope, with the full path, is the alternative.
+# resource_id is an account here, and keeps working if the account is moved to
+# another organizational unit. It takes an organizational unit id the same way.
 resource "sonrai_jit_configuration" "sandbox" {
   root_scope  = "aws/r-abcd"
   resource_id = "123456789012"
@@ -76,9 +76,9 @@ resource "sonrai_jit_configuration" "sandbox" {
 
 - `deny_first` (Boolean) Deny every entitlement that is not enrolled at this scope. Defaults to false.
 - `enrolled_entitlements` (Attributes Set) Entitlements enrolled for JIT at this scope. Anything not listed is not enrolled here. Omitting the attribute means "enrol nothing". (see [below for nested schema](#nestedatt--enrolled_entitlements))
-- `resource_id` (String) Cloud-native id of what to configure: an account such as `123456789012`, an organizational unit such as `ou-ab12-cdef3456`, or the root itself, such as `r-abcd`. Used with `root_scope`, in place of `scope`. Changing it to an id that resolves somewhere else forces replacement.
-- `root_scope` (String) Cloud organization root scope, for example `aws/r-abcd`. Used with `resource_id`, in place of `scope`.
-- `scope` (String) Full scope path to configure: a root scope such as `aws/r-abcd`, or any scope path beneath it. Enrolments apply to everything under the scope. Leave it out when using `root_scope` and `resource_id`, and it reports the path they resolved to.
+- `resource_id` (String) Cloud-native id of what to configure: an account such as `123456789012`, an organizational unit such as `ou-ab12-cdef3456`, or the root itself, such as `r-abcd`. Changing it to an id that resolves somewhere else forces replacement.
+- `root_scope` (String) Cloud organization root scope, for example `aws/r-abcd`.
+- `scope` (String) Scope path `resource_id` resolved to. Enrolments apply to everything under it. Configurations written for 0.1 set this to a full scope path instead of giving `root_scope` and `resource_id`, which still works; new ones should not.
 
 ### Read-Only
 
@@ -105,9 +105,9 @@ Import is supported using the following syntax:
 In Terraform v1.5.0 and later, the [`import` block](https://developer.hashicorp.com/terraform/language/import) can be used with the `id` attribute, for example:
 
 ```terraform
-# Import ID: root_scope@resource_id, or the full scope path for a resource
-# that sets scope. The resource is authoritative for that scope, so list every
-# entitlement already enrolled there or the next apply unenrols it.
+# Import ID: root_scope@resource_id. The resource is authoritative for what it
+# names, so list every entitlement already enrolled there or the next apply
+# unenrols it.
 import {
   to = sonrai_jit_configuration.sandbox
   id = "aws/r-abcd@123456789012"
@@ -117,8 +117,6 @@ import {
 The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
-# Import ID: the scope path, or root_scope@resource_id for a resource that
-# names its scope by id.
-terraform import sonrai_jit_configuration.org 'aws/r-abcd'
+# Import ID: root_scope@resource_id.
 terraform import sonrai_jit_configuration.sandbox 'aws/r-abcd@123456789012'
 ```

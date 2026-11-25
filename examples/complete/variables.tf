@@ -60,7 +60,7 @@ variable "region_controls" {
 }
 
 variable "jit_configurations" {
-  description = "Just-in-Time configuration, keyed by the cloud-native id of the account, organizational unit or root it applies to. Each entry replaces whatever is configured there already. A full scope path is still accepted as a key."
+  description = "Just-in-Time configuration, keyed by the cloud-native id of the account, organizational unit or root it applies to. Each entry replaces whatever is configured there already."
   type = map(object({
     deny_first = optional(bool, false)
     enrolled_entitlements = optional(set(object({
@@ -74,7 +74,7 @@ variable "jit_configurations" {
   validation {
     condition = alltrue(flatten([
       for target, c in var.jit_configurations : concat(
-        [can(regex("^([0-9]{12}|ou-[a-z0-9]+-[a-z0-9]+|r-[a-z0-9]+|aws/r-[a-z0-9]+(/[A-Za-z0-9-]+)*)$", target))],
+        [can(regex("^([0-9]{12}|ou-[a-z0-9]+-[a-z0-9]+|r-[a-z0-9]+)$", target))],
         [for e in c.enrolled_entitlements : contains(["AWS_PERMISSION_SET", "AWS_ACCOUNT_ACCESS_ROLE", "AWS_SAML_ROLE"], e.type)]
       )
     ]))

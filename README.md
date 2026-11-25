@@ -545,7 +545,7 @@ Set these in `terraform.tfvars`:
 | `protected_services` | map(object) | `{}` | `resource_id`, `control_key`, `exempt_identities`, `exempt_sso_actor_ids` |
 | `exempted_identities` | map(object) | `{}` | `identity`, `exempt_from`, `sso`, `scope` |
 | `region_controls` | map(map(string)) | `{}` | Account id => region id => `disabled` or `enabled`, e.g. `"123456789012" = { "ap-south-1" = "disabled" }` |
-| `jit_configurations` | map(object) | `{}` | Keyed by account, OU or root id: `deny_first`, `enrolled_entitlements` (`name`, `type`, `auto_pod`). A scope path still works as a key |
+| `jit_configurations` | map(object) | `{}` | Keyed by account, OU or root id: `deny_first`, `enrolled_entitlements` (`name`, `type`, `auto_pod`) |
 | `approvers` | map(object) | `{}` | Keyed by account, OU or root id: `approvers`, `approval_type`. Takes effect on apply, without `submit` |
 | `submit` | bool | `false` | Submit the staged changes and deploy the template |
 | `reset` | bool | `false` | Tear the deployment down and return every control to staged |

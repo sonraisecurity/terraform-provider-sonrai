@@ -1,8 +1,9 @@
 # JIT across the whole organization: two entitlements enrolled, everything
 # else denied.
 resource "sonrai_jit_configuration" "org" {
-  scope      = "aws/r-abcd"
-  deny_first = true
+  root_scope  = "aws/r-abcd"
+  resource_id = "r-abcd"
+  deny_first  = true
 
   enrolled_entitlements = [
     {
@@ -20,9 +21,8 @@ resource "sonrai_jit_configuration" "org" {
 # entitlement: protected actions through it need no Permissions on Demand
 # request.
 #
-# Named by account id, which keeps working if the account is moved to another
-# organizational unit. resource_id also takes an organizational unit or the
-# root; scope, with the full path, is the alternative.
+# resource_id is an account here, and keeps working if the account is moved to
+# another organizational unit. It takes an organizational unit id the same way.
 resource "sonrai_jit_configuration" "sandbox" {
   root_scope  = "aws/r-abcd"
   resource_id = "123456789012"

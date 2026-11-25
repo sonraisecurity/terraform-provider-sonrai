@@ -76,9 +76,9 @@ func (r *jitConfigurationResource) Schema(_ context.Context, _ resource.SchemaRe
 			"Declaring this resource replaces whatever the scope already has: enrolments absent " +
 			"from `enrolled_entitlements` are unenrolled, and `deny_first` takes the value " +
 			"declared here.\n\n" +
-			"Name the scope one of two ways: `root_scope` with `resource_id`, the cloud-native id of " +
-			"an account, organizational unit or root; or `scope`, its full path. The id form follows " +
-			"an account or organizational unit that is moved, where a path has to be edited.\n\n" +
+			"Name what to configure with `root_scope` and `resource_id`, the cloud-native id of an " +
+			"account, organizational unit or root. The id is resolved to its scope path on every " +
+			"run, so an account or organizational unit that is moved needs no change here.\n\n" +
 			"AWS only for now.\n\n" +
 			"Creating this resource *stages* the change. It takes effect only once the pending " +
 			"changes for the containing root scope are submitted and deployed.",
@@ -91,10 +91,10 @@ func (r *jitConfigurationResource) Schema(_ context.Context, _ resource.SchemaRe
 				},
 			},
 			"scope": schema.StringAttribute{
-				MarkdownDescription: "Full scope path to configure: a root scope such as `aws/r-abcd`, " +
-					"or any scope path beneath it. Enrolments apply to everything under the scope. " +
-					"Leave it out when using `root_scope` and `resource_id`, and it reports the path " +
-					"they resolved to.",
+				MarkdownDescription: "Scope path `resource_id` resolved to. Enrolments apply to " +
+					"everything under it. Configurations written for 0.1 set this to a full scope " +
+					"path instead of giving `root_scope` and `resource_id`, which still works; new " +
+					"ones should not.",
 				Optional: true,
 				Computed: true,
 				Validators: []validator.String{
@@ -108,9 +108,8 @@ func (r *jitConfigurationResource) Schema(_ context.Context, _ resource.SchemaRe
 				},
 			},
 			"root_scope": schema.StringAttribute{
-				MarkdownDescription: "Cloud organization root scope, for example `aws/r-abcd`. Used " +
-					"with `resource_id`, in place of `scope`.",
-				Optional: true,
+				MarkdownDescription: "Cloud organization root scope, for example `aws/r-abcd`.",
+				Optional:            true,
 				Validators: []validator.String{
 					stringvalidator.LengthAtMost(1024),
 					stringvalidator.RegexMatches(awsScopePattern, "must be an aws/ scope; JIT configuration is AWS only for now"),
@@ -119,8 +118,8 @@ func (r *jitConfigurationResource) Schema(_ context.Context, _ resource.SchemaRe
 			"resource_id": schema.StringAttribute{
 				MarkdownDescription: "Cloud-native id of what to configure: an account such as " +
 					"`123456789012`, an organizational unit such as `ou-ab12-cdef3456`, or the root " +
-					"itself, such as `r-abcd`. Used with `root_scope`, in place of `scope`. Changing " +
-					"it to an id that resolves somewhere else forces replacement.",
+					"itself, such as `r-abcd`. Changing it to an id that resolves somewhere else " +
+					"forces replacement.",
 				Optional: true,
 				Validators: []validator.String{
 					stringvalidator.LengthBetween(1, 256),

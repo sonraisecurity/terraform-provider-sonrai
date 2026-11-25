@@ -449,7 +449,7 @@ with `import` blocks. Each resource's import ID:
 | `sonrai_account_protected_service` | `control_key@root_scope@resource_id` | `iam@aws/r-abcd@123456789012` |
 | `sonrai_exempted_identity` | `identity@scope`, plus `@sso` for an SSO actor id | `*e/BreakGlass@aws/r-abcd` |
 | `sonrai_region_control` | `region_id@root_scope@resource_id` | `ap-south-1@aws/r-abcd@123456789012` |
-| `sonrai_jit_configuration` | The scope, or `root_scope@resource_id` | `aws/r-abcd/ou-ab12-cdef3456/123456789012`, `aws/r-abcd@123456789012` |
+| `sonrai_jit_configuration` | `root_scope@resource_id` | `aws/r-abcd@123456789012` |
 | `sonrai_approvers` | `root_scope@resource_id` | `aws/r-abcd@123456789012` |
 | `sonrai_control_submission` | The transaction id | `a1b2c3d4-0000-4000-8000-000000000000` |
 | `aws_cloudformation_stack` | The stack name | `SonraiCloudPermissionFirewall` |
@@ -508,7 +508,7 @@ import {
 import {
   for_each = var.jit_configurations
   to       = sonrai_jit_configuration.this[each.key]
-  id       = strcontains(each.key, "/") ? each.key : "${var.root_scope}@${each.key}"
+  id       = "${var.root_scope}@${each.key}"
 }
 
 import {
@@ -787,9 +787,9 @@ Configures Just-in-Time access at a scope. AWS only.
 
 | Attribute | Type | | |
 |---|---|---|---|
-| `root_scope` | string | optional | Cloud organization root scope. Used with `resource_id`. |
-| `resource_id` | string | optional | Id of an account, organizational unit or the root. Used with `root_scope`. |
-| `scope` | string | optional | Full scope path, in place of the two above. Reports the resolved path otherwise. |
+| `root_scope` | string | required | Cloud organization root scope. |
+| `resource_id` | string | required | Id of an account, organizational unit or the root. |
+| `scope` | string | computed | Scope path `resource_id` resolved to. |
 | `deny_first` | bool | optional | Deny every entitlement not enrolled here. Defaults to false. |
 | `enrolled_entitlements` | set(object) | optional | `name`, `type`, `auto_pod`. |
 | `pending` | bool | computed | True while a staged change has not been deployed. |
@@ -808,8 +808,9 @@ request.
 
 ```hcl
 resource "sonrai_jit_configuration" "org" {
-  scope      = "aws/r-abcd"
-  deny_first = true
+  root_scope  = "aws/r-abcd"
+  resource_id = "r-abcd"
+  deny_first  = true
 
   enrolled_entitlements = [
     { name = "PowerUserAccess" },
@@ -818,24 +819,11 @@ resource "sonrai_jit_configuration" "org" {
 }
 ```
 
-Name the scope one of two ways, never both:
-
-```hcl
-resource "sonrai_jit_configuration" "sandbox" {
-  root_scope  = "aws/r-abcd"
-  resource_id = "123456789012"
-}
-```
-
-- `root_scope` with `resource_id`, the id of an account, an organizational unit
-  or the root. It is resolved to its path on every run, so the configuration
-  follows an account or organizational unit that is moved.
-- `scope`, the full path, as in the example above. A path has to be edited when
-  what it names is moved.
-
-Pointing either form somewhere else replaces the resource. Rewriting a
-configuration from one form to the other for the same scope does not: it plans
-as an in-place change, stages nothing and leaves `revision` alone.
+`resource_id` is the id of an account, an organizational unit or the root
+itself, and the configuration covers everything beneath it. The id is resolved
+to its path on every run, reported as `scope`, so an account or organizational
+unit that is moved needs no change here. Pointing `resource_id` somewhere else
+replaces the resource.
 
 The platform replaces the whole configuration at a scope in one call, so this
 resource is authoritative for the scope it names. An entitlement enrolled from
@@ -1119,13 +1107,19 @@ nothing without reporting an error, so read them here rather than copying them
 out of the console.
 
 ```hcl
+data "sonrai_scope" "account" {
+  root_scope  = "aws/r-abcd"
+  resource_id = "123456789012"
+}
+
 data "sonrai_entitlements" "account" {
-  scope = "aws/r-abcd/123456789012"
+  scope = data.sonrai_scope.account.scope
 }
 
 resource "sonrai_jit_configuration" "account" {
-  scope      = "aws/r-abcd/123456789012"
-  deny_first = true
+  root_scope  = "aws/r-abcd"
+  resource_id = "123456789012"
+  deny_first  = true
 
   enrolled_entitlements = [
     for e in data.sonrai_entitlements.account.entitlements : {

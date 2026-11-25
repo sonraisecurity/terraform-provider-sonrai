@@ -98,15 +98,12 @@ resource "sonrai_region_control" "this" {
 # replaced by what is declared here, including enrolments made in the console.
 #
 # Keys are ids, resolved to their path on every run, so an account moved to
-# another organizational unit needs no change here. A key holding a full scope
-# path is passed through as one, which keeps a configuration written before
-# ids were accepted working as it is.
+# another organizational unit needs no change here.
 resource "sonrai_jit_configuration" "this" {
   for_each = var.jit_configurations
 
-  scope                 = strcontains(each.key, "/") ? each.key : null
-  root_scope            = strcontains(each.key, "/") ? null : var.root_scope
-  resource_id           = strcontains(each.key, "/") ? null : each.key
+  root_scope            = var.root_scope
+  resource_id           = each.key
   deny_first            = each.value.deny_first
   enrolled_entitlements = each.value.enrolled_entitlements
 }
