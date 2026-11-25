@@ -212,8 +212,8 @@ resource "sonrai_control_submission" "firewall" {
   root_scope = "aws/r-abcd"
 
   triggers = {
-    cloud9_prod = sonrai_account_disabled_service.cloud9_prod.id
-    iam_prod    = sonrai_account_protected_service.iam_prod.id
+    cloud9_prod = sonrai_account_disabled_service.cloud9_prod.revision
+    iam_prod    = sonrai_account_protected_service.iam_prod.revision
   }
 }
 
@@ -242,8 +242,15 @@ Apply with credentials for the deploy account:
 terraform apply
 ```
 
-List the controls in `triggers` so that changing any of them produces a new
-submission.
+List the `revision` of each control in `triggers`. Every resource that stages
+changes has one, and it changes whenever the resource stages something, so the
+submission runs again for a new control, a changed one and a removed one.
+
+It also covers drift. When something is changed outside Terraform and deployed,
+the next plan reverts it in place. Nothing in the configuration changed, so a
+trigger built from configured values would stay the same and the revert would
+be staged without being submitted. `revision` is unknown in any plan that
+changes its resource, which is what makes the submission run.
 
 This walkthrough assumes the firewall has not been deployed under the root
 scope before. A control that is already applied — from the console or another
@@ -281,8 +288,8 @@ outcome is the one you want:
 
 That second case is the dangerous one. The staged removals are real and
 nothing has submitted them, while Terraform's state now says the controls are
-gone. The next submission against that root scope deploys the lot — including
-one made from the console, or by a colleague, or by another configuration.
+gone. The next submission made with the same token against that root scope
+deploys the lot — including one made by another configuration.
 
 Removing controls is a configuration change, not a destroy. Delete them from
 the configuration, or empty the maps feeding them, and apply:
@@ -450,7 +457,10 @@ with `import` blocks. Each resource's import ID:
 setting.
 
 **Import the stack and its submission together.** The stack's `SonraiId`
-output names the transaction it is running, as `<org>:<transaction id>`.
+output names the transaction it is running, as `<org>:<transaction id>`. That
+is the last transaction that produced a template, which is not always the most
+recent one: a submission that changes nothing deployable leaves the stack, and
+this output, as they were.
 Import that transaction as the submission. The imported submission takes on
 the configured `triggers` without submitting, and its `stack_template_location`
 gives the stack a known `template_url`. Without it, the first apply submits
@@ -659,6 +669,7 @@ it to manage it.
 | `scope` | string | computed | Resolved scope path. |
 | `status` | string | computed | `Disabled`, `Protected`, `Unprotected` or `Non-Privileged`. |
 | `pending` | bool | computed | True while a staged change has not been deployed. |
+| `revision` | string | computed | Changes whenever this resource stages a change. Reference it in the submission's `triggers`. |
 
 Creating the resource stages the change; it takes effect once submitted and
 deployed. `status` reads `Disabled` from the moment it is staged.
@@ -685,6 +696,7 @@ protected is rejected rather than adopted; import it to manage it.
 | `scope` | string | computed | Resolved scope path. |
 | `status` | string | computed | `Protected`, `Disabled`, `Unprotected` or `Non-Privileged`. |
 | `pending` | bool | computed | True while a staged change has not been deployed. |
+| `revision` | string | computed | Changes whenever this resource stages a change. Reference it in the submission's `triggers`. |
 
 Exemptions are attributes of the protect, not resources of their own. They are
 removed when the control is unmanaged or switched to a disable.
@@ -720,6 +732,7 @@ adopted; import it to manage it. AWS only.
 | `sso` | bool | optional | Whether `identity` is an IAM Identity Center user. Defaults to false. Forces replacement. |
 | `exempt_from` | set(string) | required | `service_protect`, `service_block`, `quarantine`, `region_block`, `jit`, `tamper_protect`. |
 | `pending` | bool | computed | True while a staged change has not been deployed. |
+| `revision` | string | computed | Changes whenever this resource stages a change. Reference it in the submission's `triggers`. |
 
 This is not the per-control exemption on `sonrai_account_protected_service`.
 That one names identities exempt from a single control; this exempts an
@@ -760,6 +773,7 @@ Configures Just-in-Time access at a scope. AWS only.
 | `deny_first` | bool | optional | Deny every entitlement not enrolled here. Defaults to false. |
 | `enrolled_entitlements` | set(object) | optional | `name`, `type`, `auto_pod`. |
 | `pending` | bool | computed | True while a staged change has not been deployed. |
+| `revision` | string | computed | Changes whenever this resource stages a change. Reference it in the submission's `triggers`. |
 
 Declaring this resource replaces whatever the scope already has: enrolments
 absent from `enrolled_entitlements` are unenrolled, and `deny_first` takes the
@@ -813,6 +827,7 @@ Enables or disables one cloud region in one account. AWS only.
 | `scope` | string | computed | Canonical scope path the account resolved to. |
 | `status` | string | computed | `ENABLED` or `DISABLED`. |
 | `pending` | bool | computed | True while a staged change has not been deployed. |
+| `revision` | string | computed | Changes whenever this resource stages a change. Reference it in the submission's `triggers`. |
 | `critical` | bool | computed | Whether the platform treats the region as critical. |
 | `region_name` | string | computed | Human-readable name. |
 
@@ -875,12 +890,25 @@ deployable leaves the stack as it is. The platform's pre-signed download URL is
 deliberately not exposed, here or on `sonrai_control_transaction`: it is a
 short-lived credential and would sit in state.
 
-Reference the controls it covers in `triggers` so that changing any of them
-produces a new submission.
+Reference the `revision` of each control it covers in `triggers`, so that
+anything one of them stages produces a new submission. That includes a plan
+that only reverts a change made outside Terraform.
 
 Use one submission per root scope, and do not run concurrent applies against the
-same root scope. A submission covers every change staged under it, including
-changes staged from the console.
+same root scope. A submission covers every change the token's identity has
+staged under it, whether or not this configuration staged it, along with
+changes the platform has queued for the whole organization, such as denies for
+newly discovered third parties. Changes another user staged are left for that
+user to submit, so give each configuration its own App identity.
+
+A plan that creates or replaces the submission checks what is already pending
+under the root scope and warns when it finds anything, naming up to twenty of
+the changes. Nothing in the configuration has staged yet at that point, so
+these came from somewhere else: an earlier apply that did not finish, another
+configuration or a console session using the same identity, or the platform.
+The submission deploys them with everything the plan shows. Clear the ones that
+should not go out, in Pending Changes in the console, before applying. The
+warning cannot see anything staged between the plan and the apply.
 
 Waiting ends when the transaction reaches a terminal status or produces a
 template, whichever comes first. Use `sonrai_control_transaction` after
@@ -1045,3 +1073,39 @@ Reads a transaction, optionally waiting for a terminal status.
 | `template_location` | string | computed | |
 
 Reaching a terminal status other than `wait_for` is an error.
+
+### `sonrai_pending_changes`
+
+Lists what a submission under a root scope would deploy if it ran now.
+
+| Attribute | Type | | |
+|---|---|---|---|
+| `root_scope` | string | required | |
+| `total` | number | computed | Number of pending changes. |
+| `changes` | list(object) | computed | `id`, `change_type`, `name`, `action`, `scope`, `control_key`, `staged_by`, `identities`, `organization_wide`. |
+
+```hcl
+data "sonrai_pending_changes" "firewall" {
+  root_scope = "aws/r-abcd"
+}
+
+check "nothing_unexpected_is_pending" {
+  assert {
+    condition     = data.sonrai_pending_changes.firewall.total == 0
+    error_message = "${data.sonrai_pending_changes.firewall.total} change(s) are already pending."
+  }
+}
+```
+
+`organization_wide` is true for changes the platform queued for every
+submitter: updates to known third party accounts, and edits to custom controls
+and organization policies that are already deployed. The platform reports those
+under the caller, so `staged_by` does not tell them apart.
+
+It is read while planning, so it lists what was pending before this
+configuration staged anything. Do not give it a `depends_on` on the controls:
+that defers the read until they have staged, and it lists them too.
+
+Prefer a `check` block to a `precondition` on the submission. A precondition
+that requires nothing to be pending also blocks the apply that recovers from
+one which staged its changes and then failed before submitting them.

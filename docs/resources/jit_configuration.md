@@ -77,6 +77,7 @@ resource "sonrai_jit_configuration" "sandbox" {
 
 - `id` (String) The scope this configuration applies to.
 - `pending` (Boolean) True while any part of this configuration has a staged change that has not been submitted and deployed.
+- `revision` (String) Opaque value that changes every time this resource stages a change. Reference it in the `triggers` of the `sonrai_control_submission` for its root scope, so that anything this resource stages is submitted, including a plan that only reverts a change made outside Terraform.
 
 <a id="nestedatt--enrolled_entitlements"></a>
 ### Nested Schema for `enrolled_entitlements`

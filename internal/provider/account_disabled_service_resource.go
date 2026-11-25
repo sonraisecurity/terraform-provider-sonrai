@@ -42,6 +42,7 @@ type accountDisabledServiceModel struct {
 	Scope      types.String `tfsdk:"scope"`
 	Status     types.String `tfsdk:"status"`
 	Pending    types.Bool   `tfsdk:"pending"`
+	Revision   types.String `tfsdk:"revision"`
 }
 
 func (r *accountDisabledServiceResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -113,6 +114,7 @@ func (r *accountDisabledServiceResource) Schema(_ context.Context, _ resource.Sc
 				MarkdownDescription: "True while this control has a staged change that has not been submitted and deployed.",
 				Computed:            true,
 			},
+			"revision": revisionAttribute(),
 		},
 	}
 }
@@ -158,6 +160,7 @@ func (r *accountDisabledServiceResource) Create(ctx context.Context, req resourc
 	}
 
 	plan.ID = types.StringValue(buildID(plan))
+	plan.Revision = newRevision()
 	// The block was staged, so state is saved even when the refresh below
 	// fails: erroring out without saving would leave a staged control that
 	// Terraform has no record of and cannot later remove.
@@ -203,6 +206,7 @@ func (r *accountDisabledServiceResource) Read(ctx context.Context, req resource.
 		return
 	}
 
+	ensureRevision(&state.Revision)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -217,6 +221,9 @@ func (r *accountDisabledServiceResource) Update(ctx context.Context, req resourc
 	// this. It exists to satisfy the interface and to refresh computed values if
 	// that ever stops being true.
 	plan.ID = types.StringValue(buildID(plan))
+	// Nothing is staged here, so the revision must not move.
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("revision"), &plan.Revision)...)
+	ensureRevision(&plan.Revision)
 	gone, diags := r.readInto(ctx, &plan)
 	if gone {
 		resp.State.RemoveResource(ctx)

@@ -109,17 +109,16 @@ resource "sonrai_control_submission" "firewall" {
 
   root_scope = var.root_scope
 
+  # revision changes whenever its resource stages anything, including a plan
+  # that only reverts a change made outside Terraform. A trigger built from
+  # configured values would not move in that case, and the revert would be
+  # staged without being submitted.
   triggers = merge(
-    { for name, r in sonrai_account_disabled_service.this : "disabled_${name}" => r.id },
-    { for name, r in sonrai_account_protected_service.this : "protected_${name}" => r.id },
-    { for name, r in sonrai_exempted_identity.this : "exempt_${name}" => join("|", sort(r.exempt_from)) },
-    { for name, r in sonrai_region_control.this : "region_${name}" => r.state },
-    {
-      for scope, r in sonrai_jit_configuration.this : "jit_${scope}" => sha256(jsonencode({
-        deny_first   = r.deny_first
-        entitlements = sort([for e in r.enrolled_entitlements : "${e.type}:${e.name}:${e.auto_pod}"])
-      }))
-    },
+    { for name, r in sonrai_account_disabled_service.this : "disabled_${name}" => r.revision },
+    { for name, r in sonrai_account_protected_service.this : "protected_${name}" => r.revision },
+    { for name, r in sonrai_exempted_identity.this : "exempt_${name}" => r.revision },
+    { for name, r in sonrai_region_control.this : "region_${name}" => r.revision },
+    { for scope, r in sonrai_jit_configuration.this : "jit_${scope}" => r.revision },
   )
 
   # Checked before anything is submitted. Getting this wrong leaves a live

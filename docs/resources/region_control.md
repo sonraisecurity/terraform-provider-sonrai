@@ -78,6 +78,7 @@ resource "sonrai_region_control" "no_apac" {
 - `pending` (Boolean) True while this region has a staged change that has not been submitted and deployed.
 - `previous_state` (String) The state the account had before this resource changed it, which is what destroying the resource restores.
 - `region_name` (String) Human-readable name of the region.
+- `revision` (String) Opaque value that changes every time this resource stages a change. Reference it in the `triggers` of the `sonrai_control_submission` for its root scope, so that anything this resource stages is submitted, including a plan that only reverts a change made outside Terraform.
 - `scope` (String) Canonical scope path the account resolved to, recomputed on every read.
 - `status` (String) Status reported by the platform: `ENABLED` or `DISABLED`.
 

@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	tfpath "github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
@@ -359,4 +361,34 @@ func difference(a, b []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// revisionAttribute is the value a sonrai_control_submission's triggers should
+// reference on every resource that stages changes.
+//
+// It deliberately carries no UseStateForUnknown. The framework marks a computed
+// attribute unknown in any plan that changes the resource, and that unknown is
+// what makes the submission replace itself -- including when the plan only
+// reverts drift, where every configured value is the same as last time and a
+// trigger built from configuration would not move.
+func revisionAttribute() schema.StringAttribute {
+	return schema.StringAttribute{
+		MarkdownDescription: "Opaque value that changes every time this resource stages a change. " +
+			"Reference it in the `triggers` of the `sonrai_control_submission` for its root scope, " +
+			"so that anything this resource stages is submitted, including a plan that only " +
+			"reverts a change made outside Terraform.",
+		Computed: true,
+	}
+}
+
+func newRevision() types.String { return types.StringValue(rand.Text()) }
+
+// ensureRevision gives a resource that has never staged through this provider
+// version a revision: one that was imported, or whose state predates the
+// attribute. A known revision is left alone, because a refresh that moved it
+// would submit on every plan.
+func ensureRevision(revision *types.String) {
+	if revision.IsNull() || revision.IsUnknown() || revision.ValueString() == "" {
+		*revision = newRevision()
+	}
 }

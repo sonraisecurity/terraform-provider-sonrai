@@ -2,9 +2,11 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -255,5 +257,65 @@ func TestDeployedTemplateLocationRejectsOtherRootScope(t *testing.T) {
 	})
 	if _, err := c.DeployedTemplateLocation(context.Background(), "aws/r-abcd"); err == nil {
 		t.Error("a transaction from another root scope must be rejected, not deployed")
+	}
+}
+
+func templatelessPage(n int) string {
+	items := make([]string, n)
+	for i := range items {
+		items[i] = `{"transactionId":"t","status":"COMPLETED","rootScope":"aws/r-abcd","templateLocation":""}`
+	}
+	return `{"data":{"ControlTransactions":{"items":[` + strings.Join(items, ",") + `]}}}`
+}
+
+// TestDeployedTemplateLocationPagesPastTemplatelessTransactions: a run of
+// submissions that produce no template can be longer than one page. Stopping
+// at the first page reported "no template", and the stack was then handed an
+// empty template_url.
+func TestDeployedTemplateLocationPagesPastTemplatelessTransactions(t *testing.T) {
+	var offsets []float64
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		offset, _ := req.Variables["offset"].(float64)
+		offsets = append(offsets, offset)
+		if len(offsets) < 3 {
+			_, _ = w.Write([]byte(templatelessPage(deployedTemplatePageSize)))
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":{"ControlTransactions":{"items":[
+			{"transactionId":"deployed","status":"COMPLETED","rootScope":"aws/r-abcd","templateLocation":"https://b/deployed.json"}]}}}`))
+	})
+	got, err := c.DeployedTemplateLocation(context.Background(), "aws/r-abcd")
+	if err != nil {
+		t.Fatalf("DeployedTemplateLocation: %v", err)
+	}
+	if got != "https://b/deployed.json" {
+		t.Errorf("got %q, want the template found on the third page", got)
+	}
+	want := []float64{0, deployedTemplatePageSize, 2 * deployedTemplatePageSize}
+	if !reflect.DeepEqual(offsets, want) {
+		t.Errorf("offsets = %v, want %v", offsets, want)
+	}
+}
+
+// TestDeployedTemplateLocationFailsAtThePageCap: running out of pages is not
+// the same answer as "nothing was ever deployed", and must not be reported as
+// one.
+func TestDeployedTemplateLocationFailsAtThePageCap(t *testing.T) {
+	calls := 0
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		_, _ = w.Write([]byte(templatelessPage(deployedTemplatePageSize)))
+	})
+	if _, err := c.DeployedTemplateLocation(context.Background(), "aws/r-abcd"); err == nil {
+		t.Error("exhausting the page cap must be an error, not an empty template")
+	}
+	if calls != deployedTemplateMaxPages {
+		t.Errorf("made %d requests, want %d", calls, deployedTemplateMaxPages)
 	}
 }

@@ -150,6 +150,7 @@ func (p *sonraiProvider) DataSources(_ context.Context) []func() datasource.Data
 		NewControlTransactionDataSource,
 		NewDeployAccountDataSource,
 		NewEntitlementsDataSource,
+		NewPendingChangesDataSource,
 	}
 }
 

@@ -3,30 +3,30 @@
 page_title: "sonrai_control_submission Resource - sonrai"
 subcategory: ""
 description: |-
-  Submits every control change staged under a root scope as one transaction.
-  Staging resources such as sonrai_account_disabled_service take effect only once submitted. A submission covers all staged changes under its root scope, including any staged from the console. Use one per root scope, and do not run concurrent applies against the same root scope.
+  Submits the control changes staged under a root scope as one transaction.
+  Staging resources such as sonrai_account_disabled_service take effect only once submitted. A submission covers every change the token's identity has staged under its root scope, whether or not this configuration staged it, along with changes the platform has queued for the whole organization, such as denies for newly discovered third parties. Changes another user staged are left for that user to submit. Give each configuration its own App identity, use one submission per root scope, and do not run concurrent applies against the same root scope.
   When the submitted changes require it, the transaction produces a CloudFormation template. Deploy it with aws_cloudformation_stack using stack_template_location, or from the console.
 ---
 
 # sonrai_control_submission (Resource)
 
-Submits every control change staged under a root scope as one transaction.
+Submits the control changes staged under a root scope as one transaction.
 
-Staging resources such as `sonrai_account_disabled_service` take effect only once submitted. A submission covers all staged changes under its root scope, including any staged from the console. Use one per root scope, and do not run concurrent applies against the same root scope.
+Staging resources such as `sonrai_account_disabled_service` take effect only once submitted. A submission covers every change the token's identity has staged under its root scope, whether or not this configuration staged it, along with changes the platform has queued for the whole organization, such as denies for newly discovered third parties. Changes another user staged are left for that user to submit. Give each configuration its own App identity, use one submission per root scope, and do not run concurrent applies against the same root scope.
 
 When the submitted changes require it, the transaction produces a CloudFormation template. Deploy it with `aws_cloudformation_stack` using `stack_template_location`, or from the console.
 
 ## Example Usage
 
 ```terraform
-# One submission per root scope. Reference the controls it covers in triggers so
-# that changing any of them produces a new submission.
+# One submission per root scope. Reference the revision of each control it
+# covers in triggers, so that anything one of them stages is submitted.
 resource "sonrai_control_submission" "firewall" {
   root_scope = "aws/r-abcd"
 
   triggers = {
-    sagemaker = sonrai_account_disabled_service.sagemaker_prod.id
-    textract  = sonrai_account_disabled_service.textract_prod.id
+    sagemaker = sonrai_account_disabled_service.sagemaker_prod.revision
+    textract  = sonrai_account_disabled_service.textract_prod.revision
   }
 }
 
@@ -47,7 +47,7 @@ output "transaction" {
 
 ### Optional
 
-- `triggers` (Map of String) Arbitrary values that cause a new submission when they change. Reference the controls this submission should cover, so that changing one submits it.
+- `triggers` (Map of String) Arbitrary values that cause a new submission when they change. Reference the `revision` of each control this submission should cover. It changes whenever its resource stages something, including when a plan only reverts a change made outside Terraform, which a value taken from configuration would not.
 - `wait` (Boolean) Whether to wait for the transaction to settle before the apply returns. Waiting ends when the transaction reaches a terminal status or produces a template, whichever comes first. Defaults to true.
 - `wait_timeout` (String) How long to wait, as a Go duration such as `30m`. Defaults to `30m`, and cannot exceed `24h`, the point at which a transaction expires. A first rollout across a very large organization can take a couple of hours.
 

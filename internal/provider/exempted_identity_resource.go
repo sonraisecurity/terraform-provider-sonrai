@@ -53,6 +53,7 @@ type exemptedIdentityModel struct {
 	SSO        types.Bool   `tfsdk:"sso"`
 	ExemptFrom types.Set    `tfsdk:"exempt_from"`
 	Pending    types.Bool   `tfsdk:"pending"`
+	Revision   types.String `tfsdk:"revision"`
 }
 
 func (r *exemptedIdentityResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -132,6 +133,7 @@ func (r *exemptedIdentityResource) Schema(_ context.Context, _ resource.SchemaRe
 					"been submitted and deployed.",
 				Computed: true,
 			},
+			"revision": revisionAttribute(),
 			"exempt_from": schema.SetAttribute{
 				MarkdownDescription: "Control kinds this identity is exempt from: " +
 					"`service_protect`, `service_block`, `quarantine`, `region_block`, `jit`, " +
@@ -225,6 +227,7 @@ func (r *exemptedIdentityResource) Read(ctx context.Context, req resource.ReadRe
 	state.ExemptFrom = exemptFrom
 	state.Pending = types.BoolValue(entry.Pending)
 	state.ID = types.StringValue(exemptedIdentityID(state))
+	ensureRevision(&state.Revision)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -371,6 +374,7 @@ func (r *exemptedIdentityResource) stage(ctx context.Context, m *exemptedIdentit
 		return diags
 	}
 	m.ID = types.StringValue(exemptedIdentityID(*m))
+	m.Revision = newRevision()
 
 	// Computed attributes have to be known once the apply returns. A staging
 	// call that just succeeded is by definition undeployed.

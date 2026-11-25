@@ -41,6 +41,7 @@ type jitConfigurationModel struct {
 	DenyFirst    types.Bool   `tfsdk:"deny_first"`
 	Entitlements types.Set    `tfsdk:"enrolled_entitlements"`
 	Pending      types.Bool   `tfsdk:"pending"`
+	Revision     types.String `tfsdk:"revision"`
 }
 
 type jitEntitlementModel struct {
@@ -145,6 +146,7 @@ func (r *jitConfigurationResource) Schema(_ context.Context, _ resource.SchemaRe
 					"that has not been submitted and deployed.",
 				Computed: true,
 			},
+			"revision": revisionAttribute(),
 		},
 	}
 }
@@ -273,6 +275,7 @@ func (r *jitConfigurationResource) Read(ctx context.Context, req resource.ReadRe
 	state.DenyFirst = types.BoolValue(cfg.DenyFirst)
 	state.Entitlements = entitlements
 	state.Pending = types.BoolValue(cfg.Pending)
+	ensureRevision(&state.Revision)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -379,6 +382,7 @@ func (r *jitConfigurationResource) apply(ctx context.Context, m *jitConfiguratio
 	})
 
 	m.ID = types.StringValue(scope)
+	m.Revision = newRevision()
 	// A staging call that just succeeded is by definition undeployed, so the
 	// refresh below can only confirm it.
 	m.Pending = types.BoolValue(true)

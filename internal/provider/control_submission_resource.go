@@ -2,6 +2,8 @@ package provider
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -28,6 +30,7 @@ var (
 	_ resource.Resource                = (*controlSubmissionResource)(nil)
 	_ resource.ResourceWithConfigure   = (*controlSubmissionResource)(nil)
 	_ resource.ResourceWithImportState = (*controlSubmissionResource)(nil)
+	_ resource.ResourceWithModifyPlan  = (*controlSubmissionResource)(nil)
 )
 
 type controlSubmissionResource struct {
@@ -56,11 +59,11 @@ func (r *controlSubmissionResource) Metadata(_ context.Context, req resource.Met
 
 func (r *controlSubmissionResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Submits every control change staged under a root scope as one transaction.\n\n" +
-			"Staging resources such as `sonrai_account_disabled_service` take effect only once submitted. A " +
-			"submission covers all staged changes under its root scope, including any staged from the " +
-			"console. Use one per root scope, and do not run concurrent applies against the same root " +
-			"scope.\n\n" +
+		MarkdownDescription: "Submits the control changes staged under a root scope as one transaction.\n\n" +
+			"Staging resources such as `sonrai_account_disabled_service` take effect only once submitted. " +
+			"A submission covers every change the token's identity has staged under its root scope, whether or not this configuration staged it, along with changes the platform has queued for the whole organization, such as denies for newly discovered third parties. Changes another user staged are left for that user to submit. " +
+			"Give each configuration its own App identity, use one submission per root scope, and do not " +
+			"run concurrent applies against the same root scope.\n\n" +
 			"When the submitted changes require it, the transaction produces a CloudFormation template. " +
 			"Deploy it with `aws_cloudformation_stack` using `stack_template_location`, or from the console.",
 		Attributes: map[string]schema.Attribute{
@@ -83,7 +86,9 @@ func (r *controlSubmissionResource) Schema(_ context.Context, _ resource.SchemaR
 			},
 			"triggers": schema.MapAttribute{
 				MarkdownDescription: "Arbitrary values that cause a new submission when they change. " +
-					"Reference the controls this submission should cover, so that changing one submits it.",
+					"Reference the `revision` of each control this submission should cover. It changes " +
+					"whenever its resource stages something, including when a plan only reverts a change " +
+					"made outside Terraform, which a value taken from configuration would not.",
 				ElementType: types.StringType,
 				Optional:    true,
 				PlanModifiers: []planmodifier.Map{
@@ -180,6 +185,110 @@ func (r *controlSubmissionResource) Configure(_ context.Context, req resource.Co
 	if api := configureClient(req.ProviderData, &resp.Diagnostics); api != nil {
 		r.api = api
 	}
+}
+
+// ModifyPlan warns when a plan that will submit finds changes already pending.
+//
+// Nothing in this configuration has staged yet when a plan is made, so whatever
+// is pending came from somewhere else, and the submission deploys it along with
+// everything the plan shows. This is the only place that can be said before the
+// apply is approved.
+func (r *controlSubmissionResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if r.api == nil || req.Plan.Raw.IsNull() {
+		return
+	}
+	var plan controlSubmissionModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	rootScope := plan.RootScope
+	if rootScope.IsNull() || rootScope.IsUnknown() {
+		return
+	}
+
+	// The framework does not tell ModifyPlan what the attribute plan modifiers
+	// decided, so whether this plan replaces the submission is worked out
+	// again here, from the same inputs.
+	if !req.State.Raw.IsNull() {
+		var state controlSubmissionModel
+		resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		imported := false
+		if req.Private != nil {
+			marker, diags := req.Private.GetKey(ctx, privateImportedKey)
+			resp.Diagnostics.Append(diags...)
+			imported = string(marker) == "true"
+		}
+		if !submissionReplaces(state, plan, imported) {
+			return
+		}
+	}
+
+	changes, err := r.api.PendingChanges(ctx, rootScope.ValueString())
+	if err != nil {
+		// Advisory, so a failure to look must not block the plan -- but it
+		// must not pass for "nothing pending" either.
+		resp.Diagnostics.AddWarning(
+			"Unable to check for changes already pending",
+			"The submission will deploy whatever is pending under "+rootScope.ValueString()+
+				" for this token's identity, and that could not be listed. Check Pending Changes in "+
+				"the console before applying.\n\nUnderlying error: "+err.Error(),
+		)
+		return
+	}
+	if len(changes) == 0 {
+		return
+	}
+	resp.Diagnostics.AddWarning(pendingChangesWarning(rootScope.ValueString(), changes))
+}
+
+// submissionReplaces reports whether a plan for an existing submission submits
+// again: its root scope or triggers changed, other than by a freshly imported
+// submission taking on its configured triggers. It mirrors RequiresReplace on
+// root_scope and triggersRequireReplace on triggers.
+func submissionReplaces(state, plan controlSubmissionModel, imported bool) bool {
+	if !plan.RootScope.Equal(state.RootScope) {
+		return true
+	}
+	if plan.Triggers.Equal(state.Triggers) {
+		return false
+	}
+	return !(state.Triggers.IsNull() && imported)
+}
+
+const pendingChangesWarningLimit = 20
+
+func pendingChangesWarning(rootScope string, changes []client.PendingChange) (summary, detail string) {
+	noun := "changes are"
+	if len(changes) == 1 {
+		noun = "change is"
+	}
+	summary = fmt.Sprintf("%d %s already pending and will be deployed by this submission", len(changes), noun)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "These are pending under %s now, before this plan stages anything. They were left by "+
+		"an earlier apply, staged elsewhere with this token's identity, or queued by the platform, and "+
+		"the submission deploys them together with the changes in this plan:\n\n", rootScope)
+	for i, change := range changes {
+		if i == pendingChangesWarningLimit {
+			fmt.Fprintf(&b, "  ... and %d more\n", len(changes)-pendingChangesWarningLimit)
+			break
+		}
+		name := change.Name
+		if name == "" {
+			name = change.ChangeType + " " + change.ID
+		}
+		if change.OrganizationWide() {
+			name += " (queued by the platform)"
+		}
+		fmt.Fprintf(&b, "  - %s\n", name)
+	}
+	b.WriteString("\nReview them in Pending Changes in the console, or with the sonrai_pending_changes " +
+		"data source, and clear any that should not be deployed before applying.")
+	return summary, b.String()
 }
 
 func (r *controlSubmissionResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {

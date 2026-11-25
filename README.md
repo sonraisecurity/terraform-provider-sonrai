@@ -53,6 +53,7 @@ an organization's controls lives nowhere you can review or diff.
 | `sonrai_suggested_exemptions` | Identities the platform would exempt when protecting a service |
 | `sonrai_entitlements` | AWS permission sets, account access roles and SAML roles at a scope |
 | `sonrai_control_transaction` | A submission's progress, optionally waiting for it to finish |
+| `sonrai_pending_changes` | What a submission under a root scope would deploy if it ran now |
 
 Per-attribute reference for each of these is in [`GUIDE.md`](GUIDE.md) and on
 the [Terraform Registry](https://registry.terraform.io/providers/sonraisecurity/sonrai/latest/docs),
@@ -257,8 +258,8 @@ resource "sonrai_control_submission" "firewall" {
   root_scope = "aws/r-abcd"
 
   triggers = {
-    cloud9_prod = sonrai_account_disabled_service.cloud9_prod.id
-    iam_prod    = sonrai_account_protected_service.iam_prod.id
+    cloud9_prod = sonrai_account_disabled_service.cloud9_prod.revision
+    iam_prod    = sonrai_account_protected_service.iam_prod.revision
   }
 }
 
@@ -281,10 +282,21 @@ data "sonrai_control_transaction" "firewall" {
 }
 ```
 
-List the controls a submission covers in `triggers`, so that changing any of
-them produces a new submission. A submission covers **every** change staged
-under its root scope, including changes staged from the console — use one per
-root scope and avoid concurrent applies against the same one.
+List the `revision` of every control a submission covers in `triggers`. A
+resource's `revision` changes whenever it stages something, so the submission
+runs again for a new control, a changed one, a removed one, and a plan that
+only reverts a change made outside Terraform.
+
+A submission covers **every** change the token's identity has staged under its
+root scope, whether or not this configuration staged it, along with changes the
+platform has queued for the whole organization, such as denies for newly
+discovered third parties. Changes another user staged are left for that user to
+submit. Give each configuration its own App identity, use one submission per
+root scope, and avoid concurrent applies against the same one.
+
+A plan that will submit warns when changes are already pending, and names
+them: they are deployed along with everything the plan shows.
+`sonrai_pending_changes` lists the same changes for use in outputs and checks.
 
 ### Exempt an identity from whole classes of control
 

@@ -48,6 +48,7 @@ type accountProtectedServiceModel struct {
 	Scope             types.String `tfsdk:"scope"`
 	Status            types.String `tfsdk:"status"`
 	Pending           types.Bool   `tfsdk:"pending"`
+	Revision          types.String `tfsdk:"revision"`
 }
 
 func (r *accountProtectedServiceResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -166,6 +167,7 @@ func (r *accountProtectedServiceResource) Schema(_ context.Context, _ resource.S
 				MarkdownDescription: "True while this control has a staged change that has not been submitted and deployed.",
 				Computed:            true,
 			},
+			"revision": revisionAttribute(),
 		},
 	}
 }
@@ -286,6 +288,7 @@ func (r *accountProtectedServiceResource) Read(ctx context.Context, req resource
 	state.Pending = types.BoolValue(status.Pending)
 	state.ID = types.StringValue(protectedServiceID(state))
 
+	ensureRevision(&state.Revision)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -379,6 +382,7 @@ func (r *accountProtectedServiceResource) apply(ctx context.Context, m *accountP
 		return false, diags
 	}
 	m.ID = types.StringValue(protectedServiceID(*m))
+	m.Revision = newRevision()
 	// Issues without failures are advisory -- accounts the protect could not
 	// cover yet, for instance -- and would otherwise be invisible.
 	if issues != nil && issues.TotalCount > 0 {

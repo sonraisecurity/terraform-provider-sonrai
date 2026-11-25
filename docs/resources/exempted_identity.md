@@ -83,6 +83,7 @@ resource "sonrai_exempted_identity" "deploy_robot" {
 
 - `id` (String) Identifier of the form `identity@scope`.
 - `pending` (Boolean) True while this exemption has a staged change that has not been submitted and deployed.
+- `revision` (String) Opaque value that changes every time this resource stages a change. Reference it in the `triggers` of the `sonrai_control_submission` for its root scope, so that anything this resource stages is submitted, including a plan that only reverts a change made outside Terraform.
 
 ## Import
 
