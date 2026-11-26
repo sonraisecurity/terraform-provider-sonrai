@@ -590,24 +590,32 @@ without finding out which build it was expecting.
 
 ## Addressing
 
-Control resources take a `root_scope` and a `resource_id`. `resource_id` is the
-cloud-native id of the account to act on:
+Every resource that targets part of the cloud hierarchy takes a `root_scope` and
+a `resource_id`. `resource_id` is the cloud-native id of the target:
 
 | Target | Example |
 |---|---|
 | AWS account | `123456789012` |
 | GCP project | `my-project` |
 | Azure subscription | `00000000-0000-0000-0000-000000000000` |
+| AWS organizational unit | `ou-abcd-1a2b3c` |
+| AWS organization root | `r-abcd` |
 
 Give ids bare. `my-project` resolves the same as `projects|my-project`, and
 already-qualified ids are accepted unchanged.
 
-Organizational units, folders, management groups and roots are not accepted by
-control resources. To cover several accounts, list each one. `sonrai_scope`
-resolves containers as well, for reference.
+Which targets a resource accepts depends on what it manages:
+
+| Resource | Accepts |
+|---|---|
+| `sonrai_account_disabled_service`, `sonrai_account_protected_service`, `sonrai_region_control` | Accounts only. To cover several accounts, list each one. |
+| `sonrai_jit_configuration`, `sonrai_exempted_identity`, `sonrai_approvers`, `sonrai_entitlements` | Accounts, organizational units and the root. |
+
+`sonrai_custom_control` belongs to the whole organization and takes neither.
+`sonrai_scope` resolves any of these ids to its path, for reference.
 
 The provider resolves the scope path on every operation, so moving an account
-between organizational units requires no configuration change.
+or organizational unit requires no configuration change.
 
 ## Identities: ARNs and patterns
 
