@@ -30,6 +30,13 @@ locals {
   # the control before attaching it, and detach it before deleting it.
   custom_control_keys = { for name, c in sonrai_custom_control.this : name => c.control_key }
 
+  # One entry per policy and target, keyed "name@target_id".
+  policy_attachments = merge([
+    for name, p in var.organization_policies : {
+      for target in p.attach_to : "${name}@${target}" => { policy = name, resource_id = target }
+    }
+  ]...)
+
   # One entry per account and service, keyed "control_key@account_id". Each
   # becomes its own sonrai_account_disabled_service, so a service already
   # disabled outside this configuration is rejected rather than silently taken
@@ -75,6 +82,30 @@ resource "sonrai_custom_control" "this" {
   description = each.value.description
   cloud_type  = each.value.cloud_type
   permissions = each.value.permissions
+}
+
+# An organization policy is a service control or resource control policy of
+# your own. Defining one takes effect as soon as it is applied and is in force
+# nowhere; the attachments below are staged like any other control.
+resource "sonrai_organization_policy" "this" {
+  for_each = var.organization_policies
+
+  root_scope  = var.root_scope
+  name        = coalesce(each.value.name, each.key)
+  policy_type = each.value.policy_type
+  description = each.value.description
+  content     = each.value.content
+}
+
+# The policy applies at the target and everything beneath it. Attach at one
+# level of a branch: an account under an attached organizational unit already
+# has the policy.
+resource "sonrai_organization_policy_attachment" "this" {
+  for_each = local.policy_attachments
+
+  policy_id   = sonrai_organization_policy.this[each.value.policy].id
+  root_scope  = var.root_scope
+  resource_id = each.value.resource_id
 }
 
 resource "sonrai_account_disabled_service" "this" {
@@ -161,6 +192,11 @@ resource "sonrai_control_submission" "firewall" {
     # Moves when the permissions of a deployed custom control are edited, which
     # is what redeploys them.
     { for name, r in sonrai_custom_control.this : "custom_${name}" => r.revision },
+    # Moves when a deployed organization policy is edited, which is what
+    # redeploys it. Destroying a deployed policy only stages its removal, and
+    # dropping its entry here is what submits that.
+    { for name, r in sonrai_organization_policy.this : "policy_${name}" => r.revision },
+    { for name, r in sonrai_organization_policy_attachment.this : "policy_attachment_${name}" => r.revision },
   )
 
   # Checked before anything is submitted. Getting this wrong leaves a live

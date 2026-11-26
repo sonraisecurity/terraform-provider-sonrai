@@ -452,6 +452,8 @@ with `import` blocks. Each resource's import ID:
 | `sonrai_jit_configuration` | `root_scope@resource_id` | `aws/r-abcd@123456789012` |
 | `sonrai_approvers` | `root_scope@resource_id` | `aws/r-abcd@123456789012` |
 | `sonrai_custom_control` | `cloud_type:control_key` | `aws:datadestruction` |
+| `sonrai_organization_policy` | The policy id | `a1b2c3d4-0000-4000-8000-000000000000` |
+| `sonrai_organization_policy_attachment` | `policy_id@root_scope@resource_id` | `a1b2c3d4-0000-4000-8000-000000000000@aws/r-abcd@ou-abcd-1a2b3c4d` |
 | `sonrai_control_submission` | The transaction id | `a1b2c3d4-0000-4000-8000-000000000000` |
 | `aws_cloudformation_stack` | The stack name | `SonraiCloudPermissionFirewall` |
 
@@ -609,9 +611,11 @@ Which targets a resource accepts depends on what it manages:
 | Resource | Accepts |
 |---|---|
 | `sonrai_account_disabled_service`, `sonrai_account_protected_service`, `sonrai_region_control` | Accounts only. To cover several accounts, list each one. |
-| `sonrai_jit_configuration`, `sonrai_exempted_identity`, `sonrai_approvers`, `sonrai_entitlements` | Accounts, organizational units and the root. |
+| `sonrai_jit_configuration`, `sonrai_exempted_identity`, `sonrai_approvers`, `sonrai_entitlements`, `sonrai_organization_policy_attachment` | Accounts, organizational units and the root. |
 
 `sonrai_custom_control` belongs to the whole organization and takes neither.
+`sonrai_organization_policy` takes only the `root_scope` of the AWS
+organization it is written for; where it applies is set by its attachments.
 `sonrai_scope` resolves any of these ids to its path, for reference.
 
 The provider resolves the scope path on every operation, so moving an account
@@ -1185,6 +1189,139 @@ and are discarded with the control.
 
 The token's identity needs permission to edit cloud controls.
 
+### `sonrai_organization_policy`
+
+Defines an organization policy: a service control policy or resource control
+policy of your own that the firewall deploys alongside its own. AWS only.
+
+| Attribute | Type | | |
+|---|---|---|---|
+| `root_scope` | string | required | Root scope of the AWS organization. Forces replacement. |
+| `name` | string | required | Can be changed in place. Cannot start with `Sonrai`. |
+| `policy_type` | string | required | `SERVICE_CONTROL_POLICY` or `RESOURCE_CONTROL_POLICY`. Forces replacement. |
+| `content` | string | required | The whole policy document, as JSON. |
+| `description` | string | optional | Can be changed, but not removed once set. |
+| `id` | string | computed | Id to attach and import the policy by. |
+| `revision` | string | computed | Changes when a deployed policy needs redeploying. Reference it in the submission's `triggers`. |
+
+```hcl
+resource "sonrai_organization_policy" "deny_leaving_org" {
+  root_scope  = "aws/r-abcd"
+  name        = "deny-leaving-organization"
+  policy_type = "SERVICE_CONTROL_POLICY"
+  description = "Accounts cannot remove themselves from the organization"
+
+  content = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Deny"
+      Action   = ["organizations:LeaveOrganization"]
+      Resource = "*"
+    }]
+  })
+}
+```
+
+Sonrai does not create a separate policy in AWS. When the policy is deployed
+its statements are packed into the policies Sonrai already manages at each
+scope, so it uses none of the scope's policy attachment slots.
+
+Defining a policy is not staged: it exists in Sonrai as soon as it is applied,
+and on its own it is in force nowhere. Attach it with
+`sonrai_organization_policy_attachment`, and that part is staged and submitted
+like any other control.
+
+**The plan checks the document.** The platform reviews it during the plan, and
+the plan fails with what it finds: an action that does not exist, a statement
+with no `Effect`, a resource control policy with no `Principal`, a document
+over the size limit for its type. Write `content` with `jsonencode` or
+`data.aws_iam_policy_document`; formatting and key order are not significant.
+
+**An existing policy is not adopted.** The platform does not keep policy names
+unique, so the provider checks instead: a name a managed policy already has is
+rejected with the command to import it. `sonrai_organization_policies` lists
+what exists. Only a policy written in Sonrai can be imported. One that Sonrai
+discovered in AWS is listed by the data source and cannot be managed here.
+
+**Editing one that is not attached** takes effect at once and needs nothing
+deployed. That includes its name: the policy is identified by its id, so a
+rename is an edit, not a replacement.
+
+**Editing one that is deployed needs a redeploy.** The definition changes at
+once, but everywhere it is deployed keeps enforcing the old document until its
+root scope is submitted and deployed again. `revision` moves when that is
+needed, so with it in the submission's `triggers` the same apply redeploys:
+
+```hcl
+resource "sonrai_control_submission" "firewall" {
+  root_scope = "aws/r-abcd"
+  triggers = {
+    attachment = sonrai_organization_policy_attachment.workloads.revision
+    policy     = sonrai_organization_policy.deny_leaving_org.revision
+  }
+}
+```
+
+The apply warns with every root scope that needs it. A policy can be attached
+in more than one AWS organization, so that can include root scopes this
+configuration does not submit; the change waits in their Pending Changes until
+someone deploys it. If an apply stops after the edit and before the
+submission, `revision` keeps moving on each refresh until the edit is
+deployed, so the next apply submits it. Until it is deployed, an edit can be
+reverted from Pending Changes in the console; the next plan reports that as
+drift and puts the edit back.
+
+**Destroying a policy removes it everywhere.** One that is attached nowhere is
+deleted at once. One that is deployed has its removal staged at every scope it
+reaches, and is deleted when that is deployed, so removing the policy and its
+attachments from the configuration takes one apply. This is not limited to the
+attachments this configuration made: an attachment made in the console, or by
+another configuration, goes too. The plan warns with the scopes. The policy
+stays in force until the submission deploys, which is why the submission's
+`triggers` have to reference it: dropping its entry is what submits the
+removal. Attachments that were staged and never deployed are discarded with
+the policy.
+
+The token's identity needs the `edit.cloudcontrols` permission. Changing a
+policy changes it everywhere it is attached, so an identity restricted to part
+of the organization can only edit or remove a policy whose attachments all
+fall inside what it holds.
+
+### `sonrai_organization_policy_attachment`
+
+Attaches an organization policy to an account, organizational unit or the
+root of an AWS organization.
+
+| Attribute | Type | | |
+|---|---|---|---|
+| `policy_id` | string | required | The `id` of a `sonrai_organization_policy`. Forces replacement. |
+| `root_scope` | string | required | Root scope of the AWS organization. Forces replacement. |
+| `resource_id` | string | required | Account, organizational unit or root id. Forces replacement. |
+| `scope` | string | computed | Scope path `resource_id` resolved to. |
+| `revision` | string | computed | Reference it in the submission's `triggers`. |
+
+```hcl
+resource "sonrai_organization_policy_attachment" "workloads" {
+  policy_id   = sonrai_organization_policy.deny_leaving_org.id
+  root_scope  = "aws/r-abcd"
+  resource_id = "ou-abcd-1a2b3c4d"
+}
+```
+
+The policy applies at the target and everything beneath it, including
+accounts added later. Attaching and detaching are staged: neither is in force
+until the root scope is submitted and deployed.
+
+**An existing attachment is not adopted.** A policy that already reaches the
+target is rejected with the command to import the attachment.
+
+**Attach at one level of a branch.** The platform records the policy at every
+scope beneath an attachment and does not say which one it was attached at. An
+attachment to an account whose organizational unit is also attached cannot be
+told apart from inheritance: it reads as present for as long as the unit's
+does, and creating it is rejected as already attached. The platform also
+refuses to detach at a scope the policy reaches only from above.
+
 ## Data sources
 
 ### `sonrai_scope`
@@ -1332,6 +1469,36 @@ made in the console and by other configurations. `deployed_scopes` is where a
 control is deployed under `root_scope`; a control staged at a scope and not yet
 deployed is not listed. Use it to see what exists before defining a control,
 and to find what still has to be detached before destroying one.
+
+### `sonrai_organization_policies`
+
+Lists the organization policies Sonrai knows of in an AWS organization.
+
+| Attribute | Type | | |
+|---|---|---|---|
+| `root_scope` | string | required | Root scope of the AWS organization. |
+| `policies` | list(object) | computed | `id`, `name`, `description`, `policy_type`, `content`, `authored`, `managed`, `attached_scopes`. |
+
+```hcl
+data "sonrai_organization_policies" "all" {
+  root_scope = "aws/r-abcd"
+}
+
+output "managed_policies" {
+  value = {
+    for p in data.sonrai_organization_policies.all.policies : p.name => p.attached_scopes
+    if p.managed
+  }
+}
+```
+
+The list covers the policies written in Sonrai and the service control and
+resource control policies it discovered in AWS. `authored` is true for one
+written in Sonrai, and only those can be imported into
+`sonrai_organization_policy`. `managed` is true when Sonrai deploys the
+policy; one that is not managed is still attached by AWS itself, and
+`attached_scopes` reports where. An attachment that is staged and not yet
+deployed is not listed.
 
 ### `sonrai_pending_changes`
 

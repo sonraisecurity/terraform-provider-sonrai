@@ -142,6 +142,8 @@ func (p *sonraiProvider) Resources(_ context.Context) []func() resource.Resource
 		NewControlResetResource,
 		NewApproversResource,
 		NewCustomControlResource,
+		NewOrganizationPolicyResource,
+		NewOrganizationPolicyAttachmentResource,
 	}
 }
 
@@ -154,6 +156,7 @@ func (p *sonraiProvider) DataSources(_ context.Context) []func() datasource.Data
 		NewEntitlementsDataSource,
 		NewPendingChangesDataSource,
 		NewCustomControlsDataSource,
+		NewOrganizationPoliciesDataSource,
 	}
 }
 

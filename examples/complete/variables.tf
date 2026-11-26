@@ -119,6 +119,30 @@ variable "custom_controls" {
   }
 }
 
+variable "organization_policies" {
+  description = "Organization policies of your own, keyed by a name of your choosing, which is the policy's name unless name is given. content is the policy document as JSON; attach_to lists the cloud-native ids of the accounts, organizational units or root to attach it to. AWS only."
+  type = map(object({
+    content     = string
+    policy_type = optional(string, "SERVICE_CONTROL_POLICY")
+    name        = optional(string)
+    description = optional(string)
+    attach_to   = optional(set(string), [])
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue(flatten([
+      for key, p in var.organization_policies : concat(
+        [contains(["SERVICE_CONTROL_POLICY", "RESOURCE_CONTROL_POLICY"], p.policy_type)],
+        [can(jsondecode(p.content).Statement)],
+        [!startswith(coalesce(p.name, key), "Sonrai")],
+        [for target in p.attach_to : can(regex("^([0-9]{12}|ou-[a-z0-9]+-[a-z0-9]+|r-[a-z0-9]+)$", target))]
+      )
+    ]))
+    error_message = "Each organization policy needs a JSON policy document with a Statement, a policy_type of SERVICE_CONTROL_POLICY or RESOURCE_CONTROL_POLICY, a name that does not start with Sonrai, and attach_to ids that are a 12-digit account id, an ou-... id or an r-... id."
+  }
+}
+
 variable "approvers" {
   description = "Who approves access requests, keyed by the cloud-native id of the account, organizational unit or root. Each entry replaces the approvers assigned there, and takes effect when applied rather than when submitted."
   type = map(object({

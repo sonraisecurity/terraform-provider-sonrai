@@ -45,6 +45,8 @@ an organization's controls lives nowhere you can review or diff.
 | `sonrai_control_reset` | Organization-wide rollback of applied controls to staged |
 | `sonrai_approvers` | Who approves access requests at a scope, and who is allowed to |
 | `sonrai_custom_control` | A custom control: a named group of permissions to protect or block |
+| `sonrai_organization_policy` | A service control or resource control policy of your own (AWS) |
+| `sonrai_organization_policy_attachment` | An organization policy attached to an account, OU or root |
 
 ### Data sources
 
@@ -55,6 +57,7 @@ an organization's controls lives nowhere you can review or diff.
 | `sonrai_suggested_exemptions` | Identities the platform would exempt when protecting a service |
 | `sonrai_entitlements` | AWS permission sets, account access roles and SAML roles at a scope |
 | `sonrai_custom_controls` | The custom controls defined in the organization, and where each is deployed |
+| `sonrai_organization_policies` | The organization policies in an AWS organization, and where each is attached |
 | `sonrai_control_transaction` | A submission's progress, optionally waiting for it to finish |
 | `sonrai_pending_changes` | What a submission under a root scope would deploy if it ran now |
 
@@ -551,6 +554,7 @@ Set these in `terraform.tfvars`:
 | `region_controls` | map(map(string)) | `{}` | Account id => region id => `disabled` or `enabled`, e.g. `"123456789012" = { "ap-south-1" = "disabled" }` |
 | `jit_configurations` | map(object) | `{}` | Keyed by account, OU or root id: `deny_first`, `enrolled_entitlements` (`name`, `type`, `auto_pod`) |
 | `custom_controls` | map(object) | `{}` | Keyed by a name of your choosing: `title`, `description`, `permissions`, `cloud_type`. Use the name as a control key in `protected_services` or `disabled_services` to attach it |
+| `organization_policies` | map(object) | `{}` | Keyed by name: `content` (JSON), `policy_type`, `name`, `description`, `attach_to` (account, OU or root ids). AWS only |
 | `approvers` | map(object) | `{}` | Keyed by account, OU or root id: `approvers`, `approval_type`. Takes effect on apply, without `submit` |
 | `submit` | bool | `false` | Submit the staged changes and deploy the template |
 | `reset` | bool | `false` | Tear the deployment down and return every control to staged |

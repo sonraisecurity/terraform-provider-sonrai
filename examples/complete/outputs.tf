@@ -54,6 +54,15 @@ output "custom_controls" {
   }
 }
 
+output "organization_policies" {
+  value = {
+    for name, r in sonrai_organization_policy.this : name => {
+      id          = r.id
+      attached_to = sort([for a in sonrai_organization_policy_attachment.this : a.scope if a.policy_id == r.id])
+    }
+  }
+}
+
 output "approvers" {
   value = {
     for target, r in sonrai_approvers.this : target => {

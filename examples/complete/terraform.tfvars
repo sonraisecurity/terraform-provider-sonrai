@@ -68,6 +68,34 @@ custom_controls = {
   }
 }
 
+# Organization policies of your own: service control or resource control
+# policies the firewall deploys alongside its own, keyed by name. AWS only.
+# Defining one takes effect on apply and is in force nowhere; attach_to names
+# the accounts, organizational units or root it applies to, and that part is
+# staged. Attach at one level of a branch: an account under an attached
+# organizational unit already has the policy.
+#
+# A name a managed policy already has is rejected until it is imported.
+# Editing a deployed policy redeploys it in the same apply. Removing an entry
+# removes the policy everywhere it is attached, in the same apply.
+organization_policies = {
+  deny-leaving-organization = {
+    description = "Accounts cannot remove themselves from the organization"
+    attach_to   = ["ou-abcd-1a2b3c4d"]
+    content     = <<-JSON
+      {
+        "Version": "2012-10-17",
+        "Statement": [{
+          "Sid": "DenyLeaveOrganization",
+          "Effect": "Deny",
+          "Action": ["organizations:LeaveOrganization"],
+          "Resource": "*"
+        }]
+      }
+    JSON
+  }
+}
+
 # Who approves access requests, keyed by account, organizational unit or root
 # id. Unlike everything else in this file, approvers are not staged: they take
 # effect on apply, whether or not submit is set.
