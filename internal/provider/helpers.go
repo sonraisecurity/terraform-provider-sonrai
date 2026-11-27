@@ -414,3 +414,23 @@ func diagnoseScopeByID(rootScope, resourceID types.String, err error) diag.Diagn
 	}
 	return diagnoseAPIError("Unable to resolve scope", err)
 }
+
+// scopeResourceID returns the cloud-native id a scope path ends in, which is
+// what resources take as resource_id. It is the id as the hierarchy stores it,
+// so a GCP project comes back qualified ("projects|my-project"); resources
+// accept that form as well as the bare one.
+func scopeResourceID(scope string) string {
+	slash := strings.LastIndex(scope, "/")
+	if slash < 0 {
+		return ""
+	}
+	return scope[slash+1:]
+}
+
+func scopeResourceIDs(scopes []string) []string {
+	ids := make([]string, 0, len(scopes))
+	for _, scope := range scopes {
+		ids = append(ids, scopeResourceID(scope))
+	}
+	return ids
+}

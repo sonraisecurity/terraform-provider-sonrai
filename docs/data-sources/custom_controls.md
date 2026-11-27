@@ -61,6 +61,7 @@ Read-Only:
 
 - `cloud_type` (String)
 - `control_key` (String) Key to give `sonrai_account_protected_service` or `sonrai_account_disabled_service` to attach the control.
+- `deployed_resource_ids` (List of String) Cloud-native id of each entry in `deployed_scopes`, in the same order: what resources take as `resource_id`.
 - `deployed_scopes` (List of String) Scope paths under `root_scope` where the control is deployed. A control staged at a scope and not yet deployed is not listed. Empty means the control can be destroyed as far as this root scope is concerned.
 - `description` (String)
 - `permissions` (Set of String) Permissions the control covers, as the platform spells them.

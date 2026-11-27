@@ -26,9 +26,10 @@ data "sonrai_organization_policies" "all" {
 output "managed_policies" {
   value = {
     for p in data.sonrai_organization_policies.all.policies : p.name => {
-      id              = p.id
-      policy_type     = p.policy_type
-      attached_scopes = p.attached_scopes
+      id          = p.id
+      policy_type = p.policy_type
+      # Ids to give sonrai_organization_policy_attachment as resource_id.
+      attached_to = p.attached_resource_ids
     }
     if p.managed
   }
@@ -57,6 +58,7 @@ output "unmanaged_policies" {
 
 Read-Only:
 
+- `attached_resource_ids` (List of String) Cloud-native id of each entry in `attached_scopes`, in the same order: what `sonrai_organization_policy_attachment` takes as `resource_id`.
 - `attached_scopes` (List of String) Scope paths the policy is attached at: for a managed policy, where Sonrai has deployed it; for an unmanaged one, where AWS attaches it. An attachment that is staged and not yet deployed is not listed.
 - `authored` (Boolean) True for a policy written in Sonrai, false for one discovered in AWS. Only authored policies can be imported into `sonrai_organization_policy`.
 - `content` (String) The policy document, as compact JSON.

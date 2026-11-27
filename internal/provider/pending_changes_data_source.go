@@ -38,6 +38,7 @@ var pendingChangeAttrTypes = map[string]attr.Type{
 	"name":              types.StringType,
 	"action":            types.StringType,
 	"scope":             types.StringType,
+	"resource_id":       types.StringType,
 	"control_key":       types.StringType,
 	"staged_by":         types.StringType,
 	"identities":        types.ListType{ElemType: types.StringType},
@@ -101,6 +102,10 @@ func (d *pendingChangesDataSource) Schema(_ context.Context, _ datasource.Schema
 							MarkdownDescription: "Scope the change applies to.",
 							Computed:            true,
 						},
+						"resource_id": schema.StringAttribute{
+							MarkdownDescription: "Cloud-native id of `scope`: what resources take as `resource_id`.",
+							Computed:            true,
+						},
 						"control_key": schema.StringAttribute{
 							MarkdownDescription: "Control, third party or policy the change concerns, where it has one.",
 							Computed:            true,
@@ -161,6 +166,7 @@ func (d *pendingChangesDataSource) Read(ctx context.Context, req datasource.Read
 			"name":              types.StringValue(change.Name),
 			"action":            types.StringValue(change.Action),
 			"scope":             types.StringValue(change.Scope),
+			"resource_id":       types.StringValue(scopeResourceID(change.Scope)),
 			"control_key":       types.StringValue(change.ControlKey),
 			"staged_by":         types.StringValue(change.StagedBy),
 			"identities":        identities,

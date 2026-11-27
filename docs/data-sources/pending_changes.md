@@ -62,5 +62,6 @@ Read-Only:
 - `identities` (List of String) Identities or accounts the change adds or removes, where it has any.
 - `name` (String) Description of the change, as Pending Changes shows it in the console.
 - `organization_wide` (Boolean) True when the platform queued the change for every submitter rather than this identity staging it: updates to known third party accounts, and edits to custom controls and organization policies that are already deployed.
+- `resource_id` (String) Cloud-native id of `scope`: what resources take as `resource_id`.
 - `scope` (String) Scope the change applies to.
 - `staged_by` (String) Identity the platform reports the change under. Changes queued by the platform are reported under the caller, so use `organization_wide` to tell them apart.

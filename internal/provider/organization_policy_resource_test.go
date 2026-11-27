@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	dsschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -290,6 +291,56 @@ func TestSameJSON(t *testing.T) {
 	for _, tc := range cases {
 		if got := sameJSON(tc.a, tc.b); got != tc.want {
 			t.Errorf("sameJSON(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
+	}
+}
+
+// TestScopeResourceID: the id has to be one a resource accepts as resource_id
+// unchanged, including the root's own id and the qualified forms GCP and
+// Azure store.
+func TestScopeResourceID(t *testing.T) {
+	cases := map[string]string{
+		"aws/r-abcd":                              "r-abcd",
+		"aws/r-abcd/ou-abcd-1a2b3c":               "ou-abcd-1a2b3c",
+		"aws/r-abcd/ou-abcd-1a2b3c/123456789012":  "123456789012",
+		"gcp/organizations|1/projects|my-project": "projects|my-project",
+		"azure/|tenants|x/|subscriptions|a1b2":    "|subscriptions|a1b2",
+		"aws":                                     "",
+		"":                                        "",
+	}
+	for scope, want := range cases {
+		if got := scopeResourceID(scope); got != want {
+			t.Errorf("scopeResourceID(%q) = %q, want %q", scope, got, want)
+		}
+	}
+	ids := scopeResourceIDs([]string{"aws/r-abcd/111111111111", "aws/r-abcd"})
+	if len(ids) != 2 || ids[0] != "111111111111" || ids[1] != "r-abcd" {
+		t.Errorf("scopeResourceIDs = %v, want the ids in the order of the scopes", ids)
+	}
+}
+
+func TestDataSourcesReportResourceIDsBesideScopes(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		source      datasource.DataSource
+		list, field string
+	}{
+		{NewCustomControlsDataSource(), "controls", "deployed_resource_ids"},
+		{NewOrganizationPoliciesDataSource(), "policies", "attached_resource_ids"},
+		{NewPendingChangesDataSource(), "changes", "resource_id"},
+	}
+	for _, tc := range cases {
+		resp := &datasource.SchemaResponse{}
+		tc.source.Schema(ctx, datasource.SchemaRequest{}, resp)
+		if diags := resp.Schema.ValidateImplementation(ctx); diags.HasError() {
+			t.Fatalf("%s: invalid schema: %s", tc.list, diags)
+		}
+		list, ok := resp.Schema.Attributes[tc.list].(dsschema.ListNestedAttribute)
+		if !ok {
+			t.Fatalf("%s is not a nested list", tc.list)
+		}
+		if attr, ok := list.NestedObject.Attributes[tc.field]; !ok || !attr.IsComputed() {
+			t.Errorf("%s should report a computed %s", tc.list, tc.field)
 		}
 	}
 }

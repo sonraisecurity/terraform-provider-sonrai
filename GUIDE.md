@@ -1453,7 +1453,7 @@ Lists the custom controls defined in the organization.
 |---|---|---|---|
 | `root_scope` | string | required | Selects the cloud, and the root scope `deployed_scopes` reports on. |
 | `control_keys` | set(string) | computed | Just the keys. |
-| `controls` | list(object) | computed | `control_key`, `title`, `description`, `cloud_type`, `permissions`, `deployed_scopes`. |
+| `controls` | list(object) | computed | `control_key`, `title`, `description`, `cloud_type`, `permissions`, `deployed_scopes`, `deployed_resource_ids`. |
 
 ```hcl
 data "sonrai_custom_controls" "all" {
@@ -1473,6 +1473,8 @@ made in the console and by other configurations. `deployed_scopes` is where a
 control is deployed under `root_scope`; a control staged at a scope and not yet
 deployed is not listed. Use it to see what exists before defining a control,
 and to find what still has to be detached before destroying one.
+`deployed_resource_ids` holds the same places as cloud-native ids, in the same
+order, ready to give a resource as `resource_id`.
 
 ### `sonrai_organization_policies`
 
@@ -1481,7 +1483,7 @@ Lists the organization policies Sonrai knows of in an AWS organization.
 | Attribute | Type | | |
 |---|---|---|---|
 | `root_scope` | string | required | Root scope of the AWS organization. |
-| `policies` | list(object) | computed | `id`, `name`, `description`, `policy_type`, `content`, `authored`, `managed`, `attached_scopes`. |
+| `policies` | list(object) | computed | `id`, `name`, `description`, `policy_type`, `content`, `authored`, `managed`, `attached_scopes`, `attached_resource_ids`. |
 
 ```hcl
 data "sonrai_organization_policies" "all" {
@@ -1502,7 +1504,9 @@ written in Sonrai, and only those can be imported into
 `sonrai_organization_policy`. `managed` is true when Sonrai deploys the
 policy; one that is not managed is still attached by AWS itself, and
 `attached_scopes` reports where. An attachment that is staged and not yet
-deployed is not listed.
+deployed is not listed. `attached_resource_ids` holds the same places as
+cloud-native ids, in the same order, ready to give
+`sonrai_organization_policy_attachment` as `resource_id`.
 
 ### `sonrai_pending_changes`
 
@@ -1512,7 +1516,7 @@ Lists what a submission under a root scope would deploy if it ran now.
 |---|---|---|---|
 | `root_scope` | string | required | |
 | `total` | number | computed | Number of pending changes. |
-| `changes` | list(object) | computed | `id`, `change_type`, `name`, `action`, `scope`, `control_key`, `staged_by`, `identities`, `organization_wide`. |
+| `changes` | list(object) | computed | `id`, `change_type`, `name`, `action`, `scope`, `resource_id`, `control_key`, `staged_by`, `identities`, `organization_wide`. |
 
 ```hcl
 data "sonrai_pending_changes" "firewall" {

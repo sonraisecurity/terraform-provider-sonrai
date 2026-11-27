@@ -8,9 +8,10 @@ data "sonrai_organization_policies" "all" {
 output "managed_policies" {
   value = {
     for p in data.sonrai_organization_policies.all.policies : p.name => {
-      id              = p.id
-      policy_type     = p.policy_type
-      attached_scopes = p.attached_scopes
+      id          = p.id
+      policy_type = p.policy_type
+      # Ids to give sonrai_organization_policy_attachment as resource_id.
+      attached_to = p.attached_resource_ids
     }
     if p.managed
   }

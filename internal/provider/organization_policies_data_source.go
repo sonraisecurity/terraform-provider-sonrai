@@ -34,14 +34,15 @@ type organizationPoliciesModel struct {
 }
 
 var organizationPolicyAttrTypes = map[string]attr.Type{
-	"id":              types.StringType,
-	"name":            types.StringType,
-	"description":     types.StringType,
-	"policy_type":     types.StringType,
-	"content":         types.StringType,
-	"authored":        types.BoolType,
-	"managed":         types.BoolType,
-	"attached_scopes": types.ListType{ElemType: types.StringType},
+	"id":                    types.StringType,
+	"name":                  types.StringType,
+	"description":           types.StringType,
+	"policy_type":           types.StringType,
+	"content":               types.StringType,
+	"authored":              types.BoolType,
+	"managed":               types.BoolType,
+	"attached_scopes":       types.ListType{ElemType: types.StringType},
+	"attached_resource_ids": types.ListType{ElemType: types.StringType},
 }
 
 func (d *organizationPoliciesDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -108,6 +109,13 @@ func (d *organizationPoliciesDataSource) Schema(_ context.Context, _ datasource.
 							ElementType: types.StringType,
 							Computed:    true,
 						},
+						"attached_resource_ids": schema.ListAttribute{
+							MarkdownDescription: "Cloud-native id of each entry in `attached_scopes`, in " +
+								"the same order: what `sonrai_organization_policy_attachment` takes as " +
+								"`resource_id`.",
+							ElementType: types.StringType,
+							Computed:    true,
+						},
 					},
 				},
 			},
@@ -143,15 +151,18 @@ func (d *organizationPoliciesDataSource) Read(ctx context.Context, req datasourc
 		}
 		attachedScopes, diags := types.ListValueFrom(ctx, types.StringType, attached)
 		resp.Diagnostics.Append(diags...)
+		attachedIDs, diags := types.ListValueFrom(ctx, types.StringType, scopeResourceIDs(attached))
+		resp.Diagnostics.Append(diags...)
 		obj, diags := types.ObjectValue(organizationPolicyAttrTypes, map[string]attr.Value{
-			"id":              types.StringValue(policy.ID),
-			"name":            types.StringValue(policy.Name),
-			"description":     types.StringValue(policy.Description),
-			"policy_type":     types.StringValue(policy.Type),
-			"content":         types.StringValue(policy.Content),
-			"authored":        types.BoolValue(policy.Authored),
-			"managed":         types.BoolValue(policy.Managed),
-			"attached_scopes": attachedScopes,
+			"id":                    types.StringValue(policy.ID),
+			"name":                  types.StringValue(policy.Name),
+			"description":           types.StringValue(policy.Description),
+			"policy_type":           types.StringValue(policy.Type),
+			"content":               types.StringValue(policy.Content),
+			"authored":              types.BoolValue(policy.Authored),
+			"managed":               types.BoolValue(policy.Managed),
+			"attached_scopes":       attachedScopes,
+			"attached_resource_ids": attachedIDs,
 		})
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {

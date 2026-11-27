@@ -37,12 +37,13 @@ type customControlsModel struct {
 }
 
 var customControlAttrTypes = map[string]attr.Type{
-	"control_key":     types.StringType,
-	"title":           types.StringType,
-	"description":     types.StringType,
-	"cloud_type":      types.StringType,
-	"permissions":     types.SetType{ElemType: types.StringType},
-	"deployed_scopes": types.ListType{ElemType: types.StringType},
+	"control_key":           types.StringType,
+	"title":                 types.StringType,
+	"description":           types.StringType,
+	"cloud_type":            types.StringType,
+	"permissions":           types.SetType{ElemType: types.StringType},
+	"deployed_scopes":       types.ListType{ElemType: types.StringType},
+	"deployed_resource_ids": types.ListType{ElemType: types.StringType},
 }
 
 func (d *customControlsDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -104,6 +105,12 @@ func (d *customControlsDataSource) Schema(_ context.Context, _ datasource.Schema
 							ElementType: types.StringType,
 							Computed:    true,
 						},
+						"deployed_resource_ids": schema.ListAttribute{
+							MarkdownDescription: "Cloud-native id of each entry in `deployed_scopes`, in " +
+								"the same order: what resources take as `resource_id`.",
+							ElementType: types.StringType,
+							Computed:    true,
+						},
 					},
 				},
 			},
@@ -151,13 +158,16 @@ func (d *customControlsDataSource) Read(ctx context.Context, req datasource.Read
 		resp.Diagnostics.Append(diags...)
 		deployedScopes, diags := types.ListValueFrom(ctx, types.StringType, deployed)
 		resp.Diagnostics.Append(diags...)
+		deployedIDs, diags := types.ListValueFrom(ctx, types.StringType, scopeResourceIDs(deployed))
+		resp.Diagnostics.Append(diags...)
 		obj, diags := types.ObjectValue(customControlAttrTypes, map[string]attr.Value{
-			"control_key":     types.StringValue(control.Key),
-			"title":           types.StringValue(control.Title),
-			"description":     types.StringValue(control.Description),
-			"cloud_type":      types.StringValue(control.CloudType),
-			"permissions":     permissions,
-			"deployed_scopes": deployedScopes,
+			"control_key":           types.StringValue(control.Key),
+			"title":                 types.StringValue(control.Title),
+			"description":           types.StringValue(control.Description),
+			"cloud_type":            types.StringValue(control.CloudType),
+			"permissions":           permissions,
+			"deployed_scopes":       deployedScopes,
+			"deployed_resource_ids": deployedIDs,
 		})
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
