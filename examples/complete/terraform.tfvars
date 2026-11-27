@@ -103,8 +103,8 @@ organization_policies = {
 #
 # Each entry is authoritative for the approvers assigned there, and a scope
 # that already has approvers is rejected until it is imported. An address that
-# is not yet a Sonrai user is sent an invite. Writing approvers removes any
-# approver exceptions set on that scope in the console.
+# is not yet a Sonrai user is sent an invite. Approver exceptions set on that
+# scope in the console are kept.
 approvers = {
   # One account: these two approve, but never their own request.
   "123456789012" = {

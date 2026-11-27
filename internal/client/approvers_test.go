@@ -19,7 +19,9 @@ func TestScopeApproversReadsDirectOwners(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":{"CloudHierarchyList":{"items":[
 			{"scope":"aws/r-abcd/111111111111","approvalType":"ASSIGNED_APPROVERS",
 			 "owners":[{"email":"Zed@Example.com"},{"email":"amy@example.com"}],
-			 "exceptions":[{"appliesToApprovals":true}]}]}}}`))
+			 "exceptions":[{"appliesToApprovals":true,"appliedToNotifications":null,
+			   "conditions":[{"key":"DayOfWeek","operator":"IN_LIST","value":"SAT,SUN"}],
+			   "approvers":[{"name":"Amy","email":"amy@example.com","sonraiUserId":"srn:x::SonraiUser/1"}]}]}]}}}`))
 	})
 	got, err := c.ScopeApprovers(context.Background(), "aws/r-abcd/111111111111")
 	if err != nil {
@@ -29,7 +31,11 @@ func TestScopeApproversReadsDirectOwners(t *testing.T) {
 		Scope:        "aws/r-abcd/111111111111",
 		Emails:       []string{"amy@example.com", "zed@example.com"},
 		ApprovalType: ApprovalAssignedApprovers,
-		Exceptions:   1,
+		Exceptions: []ApproverException{{
+			AppliesToApprovals: true,
+			Conditions:         []ApproverCondition{{Key: "DayOfWeek", Operator: "IN_LIST", Value: "SAT,SUN"}},
+			Approvers:          []ExceptionApprover{{Name: "Amy", Email: "amy@example.com", SonraiUserID: "srn:x::SonraiUser/1"}},
+		}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v, want %+v", got, want)
@@ -78,7 +84,7 @@ func TestAssignScopeApproversInput(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&sent)
 		_, _ = w.Write([]byte(`{"data":{"AssignScopeOwners":{"success":true,"error":""}}}`))
 	})
-	err := c.AssignScopeApprovers(context.Background(), "aws/r-abcd", []string{"amy@example.com"}, ApprovalEveryoneAtScope)
+	err := c.AssignScopeApprovers(context.Background(), "aws/r-abcd", []string{"amy@example.com"}, ApprovalEveryoneAtScope, nil)
 	if err != nil {
 		t.Fatalf("AssignScopeApprovers: %v", err)
 	}
@@ -97,6 +103,44 @@ func TestAssignScopeApproversInput(t *testing.T) {
 	if calls != 1 {
 		t.Errorf("sent %d requests, want 1", calls)
 	}
+	if _, sentExceptions := input["exceptions"]; sentExceptions {
+		t.Errorf("no exceptions to keep, but the input carries %v", input["exceptions"])
+	}
+}
+
+// TestAssignScopeApproversSendsExceptionsBack: the platform replaces a
+// scope's exceptions with the ones in the write, so leaving them out deletes
+// rules this provider does not manage.
+func TestAssignScopeApproversSendsExceptionsBack(t *testing.T) {
+	var sent struct {
+		Variables struct {
+			Input map[string]any `json:"input"`
+		} `json:"variables"`
+	}
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&sent)
+		_, _ = w.Write([]byte(`{"data":{"AssignScopeOwners":{"success":true,"error":""}}}`))
+	})
+	exceptions := []ApproverException{{
+		AppliesToApprovals: true,
+		Conditions:         []ApproverCondition{{Key: "DayOfWeek", Operator: "IN_LIST", Value: "SAT,SUN"}},
+		Approvers:          []ExceptionApprover{{Email: "amy@example.com", SonraiUserID: "srn:x::SonraiUser/1"}, {SonraiUserID: "srn:x::Group/2"}},
+	}}
+	if err := c.AssignScopeApprovers(context.Background(), "aws/r-abcd", nil, "", exceptions); err != nil {
+		t.Fatalf("AssignScopeApprovers: %v", err)
+	}
+	want := []any{map[string]any{
+		"appliedToNotifications": false,
+		"appliesToApprovals":     true,
+		"conditions":             []any{map[string]any{"key": "DayOfWeek", "operator": "IN_LIST", "value": "SAT,SUN"}},
+		"approvers": []any{
+			map[string]any{"email": "amy@example.com", "sonraiUserId": "srn:x::SonraiUser/1"},
+			map[string]any{"sonraiUserId": "srn:x::Group/2"},
+		},
+	}}
+	if got := sent.Variables.Input["exceptions"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("exceptions = %v\nwant %v", got, want)
+	}
 }
 
 // TestAssignScopeApproversSendsAnEmptyListToClear: omitting owners would leave
@@ -108,7 +152,7 @@ func TestAssignScopeApproversSendsAnEmptyListToClear(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&raw)
 		_, _ = w.Write([]byte(`{"data":{"AssignScopeOwners":{"success":true}}}`))
 	})
-	if err := c.AssignScopeApprovers(context.Background(), "aws/r-abcd", nil, ""); err != nil {
+	if err := c.AssignScopeApprovers(context.Background(), "aws/r-abcd", nil, "", nil); err != nil {
 		t.Fatalf("AssignScopeApprovers: %v", err)
 	}
 	input := raw["variables"].(map[string]any)["input"].(map[string]any)
@@ -128,7 +172,7 @@ func TestAssignScopeApproversFailsOnUnsuccessfulPayload(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"AssignScopeOwners":{"success":false,"error":"Each owner must have an email"}}}`))
 	})
-	err := c.AssignScopeApprovers(context.Background(), "aws/r-abcd", []string{"amy@example.com"}, "")
+	err := c.AssignScopeApprovers(context.Background(), "aws/r-abcd", []string{"amy@example.com"}, "", nil)
 	if err == nil || !strings.Contains(err.Error(), "Each owner must have an email") {
 		t.Errorf("err = %v, want the platform's reason", err)
 	}

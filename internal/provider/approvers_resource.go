@@ -76,10 +76,9 @@ func (r *approversResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"rather than adopted; import it instead.\n\n" +
 			"Unlike the control resources, this takes effect as soon as it is applied. Nothing is staged " +
 			"and no `sonrai_control_submission` is involved.\n\n" +
-			"~> **Approver exceptions are removed.** Conditional approver rules set on the scope in the " +
-			"console are not managed by this resource yet, and the platform deletes them whenever the " +
-			"scope's approvers are written. Every apply that creates, changes or destroys this resource " +
-			"removes them, and the apply warns when it does.\n\n" +
+			"Approver exceptions, the conditional approver rules set on a scope in the console, are " +
+			"not managed by this resource and are left as they are: every write sends the scope's " +
+			"exceptions back unchanged, and destroy keeps them.\n\n" +
 			"~> **Applying can invite people and grant a role.** An address that is not yet a Sonrai " +
 			"user is sent an invite, and an approver without an approver role is granted " +
 			"`CloudPermissionFirewallApprover`. Neither is undone when the approver is removed here.",
@@ -295,11 +294,11 @@ func (r *approversResource) Delete(ctx context.Context, req resource.DeleteReque
 	}
 
 	tflog.Info(ctx, "removing approvers", map[string]any{"scope": scope, "restore_approval_type": restore})
-	if err := r.api.AssignScopeApprovers(ctx, scope, nil, restore); err != nil {
+	if err := r.api.AssignScopeApprovers(ctx, scope, nil, restore, before.Exceptions); err != nil {
 		resp.Diagnostics.Append(diagnoseAPIError("Unable to remove approvers", err)...)
 		return
 	}
-	warnExceptionsRemoved(&resp.Diagnostics, scope, before.Exceptions)
+	r.warnIfExceptionsLost(ctx, &resp.Diagnostics, scope, len(before.Exceptions))
 }
 
 func (r *approversResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
@@ -337,7 +336,7 @@ func approversID(m approversModel) string {
 
 // assign writes the planned approvers and approval type, and fills in the
 // computed attributes on m.
-func (r *approversResource) assign(ctx context.Context, m *approversModel, exceptions int) diag.Diagnostics {
+func (r *approversResource) assign(ctx context.Context, m *approversModel, exceptions []client.ApproverException) diag.Diagnostics {
 	var diags diag.Diagnostics
 
 	emails, d := setToStrings(ctx, m.Approvers)
@@ -352,7 +351,7 @@ func (r *approversResource) assign(ctx context.Context, m *approversModel, excep
 		"scope": scope, "approvers": len(emails), "approval_type": approvalType,
 	})
 
-	if err := r.api.AssignScopeApprovers(ctx, scope, emails, approvalType); err != nil {
+	if err := r.api.AssignScopeApprovers(ctx, scope, emails, approvalType, exceptions); err != nil {
 		diags.Append(diagnoseAPIError("Unable to assign approvers", err)...)
 		return diags
 	}
@@ -360,26 +359,39 @@ func (r *approversResource) assign(ctx context.Context, m *approversModel, excep
 	if m.PreviousApprovalType.IsNull() || m.PreviousApprovalType.IsUnknown() {
 		m.PreviousApprovalType = types.StringValue("")
 	}
-	warnExceptionsRemoved(&diags, scope, exceptions)
+	r.warnIfExceptionsLost(ctx, &diags, scope, len(exceptions))
 	return diags
 }
 
-// warnExceptionsRemoved reports the exceptions a write just deleted. The
-// platform removes them on every write to a scope's approvers and this
-// resource does not put them back, so saying nothing would lose them silently.
-func warnExceptionsRemoved(diags *diag.Diagnostics, scope string, exceptions int) {
-	if exceptions == 0 {
+// warnIfExceptionsLost reads the scope back after a write that was meant to
+// keep its exceptions. The write replaces them with what it was sent, so a
+// platform that dropped or rejected part of that would lose them silently.
+func (r *approversResource) warnIfExceptionsLost(ctx context.Context, diags *diag.Diagnostics, scope string, before int) {
+	if before == 0 {
+		return
+	}
+	after, err := r.api.ScopeApprovers(ctx, scope)
+	if err != nil {
+		diags.AddWarning("Unable to confirm approver exceptions were kept",
+			fmt.Sprintf("%s had %d approver exception(s) before this write, and reading it back failed: %s. "+
+				"Check them in the console.", scope, before, err.Error()))
+		return
+	}
+	warnExceptionsRemoved(diags, scope, before-len(after.Exceptions))
+}
+
+func warnExceptionsRemoved(diags *diag.Diagnostics, scope string, lost int) {
+	if lost <= 0 {
 		return
 	}
 	noun := "exceptions were"
-	if exceptions == 1 {
+	if lost == 1 {
 		noun = "exception was"
 	}
 	diags.AddWarning(
-		fmt.Sprintf("%d approver %s removed from %s", exceptions, noun, scope),
-		"The platform deletes a scope's approver exceptions whenever its approvers are written, and "+
-			"sonrai_approvers does not manage exceptions yet. Recreate them in the console if they are "+
-			"still needed; the next apply that changes this resource will remove them again.",
+		fmt.Sprintf("%d approver %s removed from %s", lost, noun, scope),
+		"sonrai_approvers sends a scope's approver exceptions back unchanged with every write, but the "+
+			"platform did not keep all of them this time. Recreate the missing ones in the console.",
 	)
 }
 

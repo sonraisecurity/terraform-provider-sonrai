@@ -162,9 +162,8 @@ resource "sonrai_jit_configuration" "this" {
 }
 
 # Approvers are not staged: this takes effect as soon as it is applied, so it
-# has no revision and stays out of the submission's triggers below. Writing a
-# scope's approvers also removes any approver exceptions set on it in the
-# console.
+# has no revision and stays out of the submission's triggers below. Approver
+# exceptions set on a scope in the console are kept.
 resource "sonrai_approvers" "this" {
   for_each = var.approvers
 

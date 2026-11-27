@@ -1068,12 +1068,14 @@ inherits from its parents are not listed and not affected, so an empty
 `approvers` leaves the scope to the ones it inherits. A scope that already has
 approvers of its own is rejected rather than adopted; import it.
 
-Three things happen beyond the scope's own approver list:
+Approver exceptions, the conditional approver rules set on a scope in the
+console, are not managed here and are left as they are. The platform replaces a
+scope's exceptions with whatever a write sends, so every create, change and
+destroy reads them and sends them back unchanged. An apply warns if any are
+missing afterwards.
 
-- **Approver exceptions are removed.** Conditional approver rules set on the
-  scope in the console are not managed here yet, and the platform deletes them
-  whenever the scope's approvers are written. Every apply that creates, changes
-  or destroys the resource removes them, and warns when it has.
+Two things happen beyond the scope's own approver list:
+
 - **People can be invited and granted a role.** An address that is not yet a
   Sonrai user is sent an invite, and an approver without an approver role is
   granted `CloudPermissionFirewallApprover`. Removing the approver later undoes

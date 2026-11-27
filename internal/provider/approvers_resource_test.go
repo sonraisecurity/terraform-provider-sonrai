@@ -71,13 +71,13 @@ func TestProviderServesApprovers(t *testing.T) {
 	t.Error("provider does not serve sonrai_approvers")
 }
 
-// TestApproversSchemaStatesItsSideEffects: applying this resource deletes
-// exceptions, sends invites and grants a role. Each has to be stated before
-// anyone declares it.
+// TestApproversSchemaStatesItsSideEffects: applying this resource sends
+// invites and grants a role, and leaves exceptions alone. Each has to be
+// stated before anyone declares it.
 func TestApproversSchemaStatesItsSideEffects(t *testing.T) {
 	desc := approversSchema(t).MarkdownDescription
 	for _, want := range []string{
-		"Approver exceptions are removed",
+		"exceptions back unchanged",
 		"sent an invite",
 		"CloudPermissionFirewallApprover",
 		"rejected rather than adopted",
@@ -167,7 +167,12 @@ func TestWarnExceptionsRemoved(t *testing.T) {
 	var none diag.Diagnostics
 	warnExceptionsRemoved(&none, "aws/r-abcd", 0)
 	if len(none) != 0 {
-		t.Error("no exceptions should produce no warning")
+		t.Error("no exceptions lost should produce no warning")
+	}
+	// More exceptions after the write than before means someone added one.
+	warnExceptionsRemoved(&none, "aws/r-abcd", -1)
+	if len(none) != 0 {
+		t.Error("a gain in exceptions should produce no warning")
 	}
 
 	var some diag.Diagnostics

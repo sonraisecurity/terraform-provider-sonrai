@@ -29,10 +29,34 @@ type ScopeApprovers struct {
 	// sorted. Approvers inherited from a parent scope are not included.
 	Emails       []string
 	ApprovalType string
-	// Exceptions counts the conditional approver rules on the scope. They are
-	// not modelled here, but every write removes them, so callers need to know
-	// when there are some to lose.
-	Exceptions int
+	// Exceptions are the conditional approver rules on the scope. A write
+	// replaces them with whatever it sends, so a caller that does not mean to
+	// change them has to send these back.
+	Exceptions []ApproverException
+}
+
+// ApproverException is a conditional approver rule: when every condition
+// matches a request, these approvers decide it instead of the scope's own.
+type ApproverException struct {
+	AppliedToNotifications bool                `json:"appliedToNotifications"`
+	AppliesToApprovals     bool                `json:"appliesToApprovals"`
+	Conditions             []ApproverCondition `json:"conditions"`
+	Approvers              []ExceptionApprover `json:"approvers"`
+}
+
+// ApproverCondition is one test an exception makes of a request.
+type ApproverCondition struct {
+	Key      string `json:"key"`
+	Operator string `json:"operator"`
+	Value    string `json:"value"`
+}
+
+// ExceptionApprover names an approver of an exception, by user id, email or
+// both. A group is named by id alone.
+type ExceptionApprover struct {
+	Name         string `json:"name,omitempty"`
+	Email        string `json:"email,omitempty"`
+	SonraiUserID string `json:"sonraiUserId,omitempty"`
 }
 
 const scopeApproversQuery = `
@@ -42,7 +66,12 @@ query scopeApprovers($filters: CloudHierarchyFilter) {
       scope
       approvalType
       owners { email }
-      exceptions { appliesToApprovals }
+      exceptions {
+        appliedToNotifications
+        appliesToApprovals
+        conditions { key operator value }
+        approvers { name email sonraiUserId }
+      }
     }
   }
 }`
@@ -66,9 +95,7 @@ func (c *Client) ScopeApprovers(ctx context.Context, scope string) (*ScopeApprov
 				Owners       []struct {
 					Email string `json:"email"`
 				} `json:"owners"`
-				Exceptions []struct {
-					AppliesToApprovals bool `json:"appliesToApprovals"`
-				} `json:"exceptions"`
+				Exceptions []ApproverException `json:"exceptions"`
 			} `json:"items"`
 		} `json:"CloudHierarchyList"`
 	}
@@ -87,7 +114,7 @@ func (c *Client) ScopeApprovers(ctx context.Context, scope string) (*ScopeApprov
 		approvers := &ScopeApprovers{
 			Scope:        item.Scope,
 			ApprovalType: item.ApprovalType,
-			Exceptions:   len(item.Exceptions),
+			Exceptions:   item.Exceptions,
 			Emails:       make([]string, 0, len(item.Owners)),
 		}
 		if approvers.ApprovalType == "" {
@@ -105,12 +132,13 @@ func (c *Client) ScopeApprovers(ctx context.Context, scope string) (*ScopeApprov
 }
 
 // AssignScopeApprovers replaces the approvers set directly on scope with
-// emails, and sets its approval type when approvalType is not empty.
+// emails, its conditional approver rules with exceptions, and sets its
+// approval type when approvalType is not empty.
 //
 // It takes effect immediately; nothing is staged. Beyond the scope itself:
 //
-//   - Every conditional approver rule (exception) on the scope is removed,
-//     whether or not any is sent.
+//   - The scope's exceptions become exactly the ones sent. Sending none
+//     removes them all, so pass what ScopeApprovers returned to keep them.
 //   - An email that is not yet a Sonrai user is invited, and an approver who
 //     lacks an approver role is granted one. Neither is undone when the
 //     approver is later removed.
@@ -121,7 +149,7 @@ func (c *Client) ScopeApprovers(ctx context.Context, scope string) (*ScopeApprov
 // because true deletes the approvers and exceptions of every scope beneath.
 //
 // The invites and role grants are why this is sent once rather than retried.
-func (c *Client) AssignScopeApprovers(ctx context.Context, scope string, emails []string, approvalType string) error {
+func (c *Client) AssignScopeApprovers(ctx context.Context, scope string, emails []string, approvalType string, exceptions []ApproverException) error {
 	owners := make([]map[string]any, 0, len(emails))
 	for _, email := range emails {
 		owners = append(owners, map[string]any{"email": email})
@@ -133,6 +161,9 @@ func (c *Client) AssignScopeApprovers(ctx context.Context, scope string, emails 
 	}
 	if approvalType != "" {
 		input["approvalType"] = approvalType
+	}
+	if len(exceptions) > 0 {
+		input["exceptions"] = exceptions
 	}
 
 	var out struct {

@@ -6,7 +6,7 @@ description: |-
   Sets who approves access requests at an account, organizational unit or root, and who is allowed to.
   The resource is authoritative for the approvers assigned at its scope: any assigned there and left out of approvers are removed. Approvers a scope inherits from its parents are not affected and are not listed. A scope that already has approvers of its own is rejected rather than adopted; import it instead.
   Unlike the control resources, this takes effect as soon as it is applied. Nothing is staged and no sonrai_control_submission is involved.
-  ~> Approver exceptions are removed. Conditional approver rules set on the scope in the console are not managed by this resource yet, and the platform deletes them whenever the scope's approvers are written. Every apply that creates, changes or destroys this resource removes them, and the apply warns when it does.
+  Approver exceptions, the conditional approver rules set on a scope in the console, are not managed by this resource and are left as they are: every write sends the scope's exceptions back unchanged, and destroy keeps them.
   ~> Applying can invite people and grant a role. An address that is not yet a Sonrai user is sent an invite, and an approver without an approver role is granted CloudPermissionFirewallApprover. Neither is undone when the approver is removed here.
 ---
 
@@ -18,7 +18,7 @@ The resource is authoritative for the approvers assigned at its scope: any assig
 
 Unlike the control resources, this takes effect as soon as it is applied. Nothing is staged and no `sonrai_control_submission` is involved.
 
-~> **Approver exceptions are removed.** Conditional approver rules set on the scope in the console are not managed by this resource yet, and the platform deletes them whenever the scope's approvers are written. Every apply that creates, changes or destroys this resource removes them, and the apply warns when it does.
+Approver exceptions, the conditional approver rules set on a scope in the console, are not managed by this resource and are left as they are: every write sends the scope's exceptions back unchanged, and destroy keeps them.
 
 ~> **Applying can invite people and grant a role.** An address that is not yet a Sonrai user is sent an invite, and an approver without an approver role is granted `CloudPermissionFirewallApprover`. Neither is undone when the approver is removed here.
 
