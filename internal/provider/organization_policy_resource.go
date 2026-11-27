@@ -555,28 +555,21 @@ func (r *organizationPolicyResource) Update(ctx context.Context, req resource.Up
 		return
 	}
 	needsDeploy := detail.Deployed()
-	switch {
-	case needsDeploy:
-		// Set even when the plan pinned it: the policy may have been deployed
-		// between the plan and now, and a pinned revision would leave the edit
-		// undeployed with nothing to submit it.
-		plan.Revision = newRevision()
-	case plan.Revision.IsUnknown():
-		plan.Revision = state.Revision
-	}
+	revision, submitsNow := revisionAfterEdit(plan.Revision, state.Revision, needsDeploy)
+	plan.Revision = revision
 	if needsDeploy {
 		resp.Diagnostics.AddWarning("Organization policy needs redeploying",
-			policyRedeployDetail(plan.Name.ValueString(), detail.DeployedRootScopes()))
+			policyRedeployDetail(plan.Name.ValueString(), detail.DeployedRootScopes(), submitsNow))
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func policyRedeployDetail(name string, rootScopes []string) string {
+func policyRedeployDetail(name string, rootScopes []string, submitsNow bool) string {
 	return fmt.Sprintf("The edit to %q is saved, but where the policy is already deployed the old version "+
 		"stays in force until the root scope is submitted and deployed again:\n\n  - %s\n\n"+
-		"A sonrai_control_submission whose triggers reference this resource's revision does that in this "+
-		"apply. Any root scope listed here that this configuration does not submit has to be deployed "+
-		"separately; the change waits in its Pending Changes.", name, strings.Join(rootScopes, "\n  - "))
+		"%s Any root scope listed here that this configuration does not submit has to be deployed "+
+		"separately; the change waits in its Pending Changes.",
+		name, strings.Join(rootScopes, "\n  - "), redeployTiming(submitsNow))
 }
 
 func (r *organizationPolicyResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

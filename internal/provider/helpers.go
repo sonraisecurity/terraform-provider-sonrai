@@ -434,3 +434,33 @@ func scopeResourceIDs(scopes []string) []string {
 	}
 	return ids
 }
+
+// revisionAfterEdit returns the revision to record after an edit, and whether
+// a submission triggered by it runs in this apply.
+//
+// A revision the plan pinned is kept even when the edit turns out to need a
+// redeploy, which happens when the thing was deployed between the plan and the
+// apply. Terraform fails an apply that returns a value other than the planned
+// one, and the submission was planned against the old value regardless. The
+// next refresh sees the outstanding redeploy and moves the revision then.
+func revisionAfterEdit(planned, prior types.String, needsDeploy bool) (types.String, bool) {
+	switch {
+	case !planned.IsUnknown():
+		return planned, false
+	case needsDeploy:
+		return newRevision(), true
+	default:
+		return prior, false
+	}
+}
+
+// redeployTiming says when an edit that needs a redeploy is submitted.
+func redeployTiming(submitsNow bool) string {
+	if submitsNow {
+		return "A sonrai_control_submission whose triggers reference this resource's revision does that in " +
+			"this apply."
+	}
+	return "This apply does not submit it: nothing was deployed when the plan was made, so the plan did " +
+		"not schedule a submission. Run terraform apply again; the next plan picks the change up and a " +
+		"sonrai_control_submission whose triggers reference this resource's revision submits it."
+}

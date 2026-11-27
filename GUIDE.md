@@ -1168,7 +1168,9 @@ organization, so that can include root scopes this configuration does not
 submit; the change waits in their Pending Changes until someone deploys it. If
 an apply stops after the edit and before the submission, `revision` keeps
 moving on each refresh until the redeploy has happened, so the next apply
-submits it. Editing only the description needs no redeploy.
+submits it. The same applies when the control was first deployed between the
+plan and the apply: the warning then says to apply again. Editing only the
+description needs no redeploy.
 
 **Destroying one that is attached takes two applies.** The platform will not
 delete a control that is still deployed, and detaching one only takes effect
@@ -1267,7 +1269,9 @@ in more than one AWS organization, so that can include root scopes this
 configuration does not submit; the change waits in their Pending Changes until
 someone deploys it. If an apply stops after the edit and before the
 submission, `revision` keeps moving on each refresh until the edit is
-deployed, so the next apply submits it. Until it is deployed, an edit can be
+deployed, so the next apply submits it. The same applies when the policy was
+first deployed between the plan and the apply: the warning then says to apply
+again. Until it is deployed, an edit can be
 reverted from Pending Changes in the console; the next plan reports that as
 drift and puts the edit back.
 

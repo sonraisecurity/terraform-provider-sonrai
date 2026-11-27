@@ -500,22 +500,18 @@ func (r *customControlResource) Update(ctx context.Context, req resource.UpdateR
 	}
 
 	needsDeploy := len(result.SyncRequired) > 0
-	switch {
-	case plan.Revision.IsUnknown() && needsDeploy:
-		plan.Revision = newRevision()
-	case plan.Revision.IsUnknown():
-		plan.Revision = state.Revision
-	}
+	revision, submitsNow := revisionAfterEdit(plan.Revision, state.Revision, needsDeploy)
+	plan.Revision = revision
 	if needsDeploy {
 		resp.Diagnostics.AddWarning(
 			"Custom control needs redeploying",
-			syncRequiredDetail(state.ControlKey.ValueString(), result.SyncRequired),
+			syncRequiredDetail(state.ControlKey.ValueString(), result.SyncRequired, submitsNow),
 		)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func syncRequiredDetail(key string, sync []client.CustomControlSync) string {
+func syncRequiredDetail(key string, sync []client.CustomControlSync, submitsNow bool) string {
 	lines := make([]string, 0, len(sync))
 	for _, s := range sync {
 		noun := "scopes"
@@ -527,9 +523,9 @@ func syncRequiredDetail(key string, sync []client.CustomControlSync) string {
 	sort.Strings(lines)
 	return fmt.Sprintf("The new permission list for %q is saved, but where the control is already deployed "+
 		"the old list stays in force until the root scope is submitted and deployed again:\n\n%s\n\n"+
-		"A sonrai_control_submission whose triggers reference this resource's revision does that in this "+
-		"apply. Any root scope listed here that this configuration does not submit has to be deployed "+
-		"separately; the change waits in its Pending Changes.", key, strings.Join(lines, "\n"))
+		"%s Any root scope listed here that this configuration does not submit has to be deployed "+
+		"separately; the change waits in its Pending Changes.",
+		key, strings.Join(lines, "\n"), redeployTiming(submitsNow))
 }
 
 func (r *customControlResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

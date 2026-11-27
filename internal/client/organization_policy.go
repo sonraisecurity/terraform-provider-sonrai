@@ -88,6 +88,17 @@ func (d *OrganizationPolicyDetail) AttachedAt(scope string) bool {
 	return adding || (applied && !removing)
 }
 
+// DeployedAt reports whether the policy is in force at scope today, whatever
+// is staged there.
+func (d *OrganizationPolicyDetail) DeployedAt(scope string) bool {
+	for _, m := range d.Applied {
+		if m.Scope == scope {
+			return true
+		}
+	}
+	return false
+}
+
 // DeployedScopes lists the topmost scopes the policy is deployed at.
 func (d *OrganizationPolicyDetail) DeployedScopes() []string {
 	scopes := make([]string, 0, len(d.Applied))

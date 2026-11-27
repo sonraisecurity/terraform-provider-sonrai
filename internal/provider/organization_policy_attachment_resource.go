@@ -280,6 +280,16 @@ func (r *organizationPolicyAttachmentResource) Delete(ctx context.Context, req r
 		scope = state.Scope.ValueString()
 	}
 
+	detail, err := r.api.OrganizationPolicy(ctx, policyID)
+	if err != nil {
+		if isNotFound(err) {
+			return
+		}
+		resp.Diagnostics.Append(diagnoseOrganizationPolicyError("Unable to read organization policy", err)...)
+		return
+	}
+	deployed := detail.DeployedAt(scope)
+
 	tflog.Info(ctx, "staging organization policy detachment", map[string]any{"policy_id": policyID, "scope": scope})
 	if err := r.api.DetachOrganizationPolicy(ctx, policyID, scope); err != nil {
 		if isNotFound(err) {
@@ -294,7 +304,18 @@ func (r *organizationPolicyAttachmentResource) Delete(ctx context.Context, req r
 			return
 		}
 		resp.Diagnostics.Append(diagnoseOrganizationPolicyError("Unable to detach organization policy", err)...)
+		return
 	}
+	if deployed {
+		resp.Diagnostics.AddWarning("Detaching the organization policy is staged, not applied",
+			policyDetachStagedDetail(detail.Policy.Name, scope))
+	}
+}
+
+func policyDetachStagedDetail(name, scope string) string {
+	return fmt.Sprintf("The attachment of %q at %s has been staged for removal. The policy remains in force "+
+		"there until the pending changes for its root scope are submitted and deployed, which a "+
+		"sonrai_control_submission covering that scope does later in this same apply.", name, scope)
 }
 
 func (r *organizationPolicyAttachmentResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

@@ -344,3 +344,61 @@ func TestDataSourcesReportResourceIDsBesideScopes(t *testing.T) {
 		}
 	}
 }
+
+// TestRevisionAfterEdit: a revision the plan pinned has to come back
+// unchanged, or Terraform fails the apply with an inconsistent result. The
+// redeploy is then left to the next refresh.
+func TestRevisionAfterEdit(t *testing.T) {
+	prior := types.StringValue("prior")
+	pinned := types.StringValue("pinned")
+
+	got, submitsNow := revisionAfterEdit(pinned, prior, true)
+	if !got.Equal(pinned) || submitsNow {
+		t.Errorf("pinned, needs deploy: revision = %s, submitsNow = %v; want the pinned value and false", got, submitsNow)
+	}
+	got, submitsNow = revisionAfterEdit(pinned, prior, false)
+	if !got.Equal(pinned) || submitsNow {
+		t.Errorf("pinned, no deploy: revision = %s, submitsNow = %v", got, submitsNow)
+	}
+	got, submitsNow = revisionAfterEdit(types.StringUnknown(), prior, true)
+	if got.IsUnknown() || got.IsNull() || got.Equal(prior) || !submitsNow {
+		t.Errorf("unknown, needs deploy: revision = %s, submitsNow = %v; want a new value and true", got, submitsNow)
+	}
+	got, submitsNow = revisionAfterEdit(types.StringUnknown(), prior, false)
+	if !got.Equal(prior) || submitsNow {
+		t.Errorf("unknown, no deploy: revision = %s, submitsNow = %v; want the prior value and false", got, submitsNow)
+	}
+}
+
+func TestRedeployWarningSaysWhichApplySubmits(t *testing.T) {
+	roots := []string{"aws/r-abcd"}
+	sync := []client.CustomControlSync{{RootScope: "aws/r-abcd", Scopes: []string{"a"}}}
+	for name, now := range map[string]string{
+		"policy":  policyRedeployDetail("deny-delete", roots, true),
+		"control": syncRequiredDetail("breakglass", sync, true),
+	} {
+		if !strings.Contains(now, "does that in this apply") || strings.Contains(now, "apply again") {
+			t.Errorf("%s: a scheduled submission should be promised for this apply:\n%s", name, now)
+		}
+	}
+	for name, later := range map[string]string{
+		"policy":  policyRedeployDetail("deny-delete", roots, false),
+		"control": syncRequiredDetail("breakglass", sync, false),
+	} {
+		if strings.Contains(later, "does that in this apply") || !strings.Contains(later, "apply again") {
+			t.Errorf("%s: an unscheduled submission must not be promised for this apply:\n%s", name, later)
+		}
+		if !strings.Contains(later, "aws/r-abcd") {
+			t.Errorf("%s: detail should still name the root scope:\n%s", name, later)
+		}
+	}
+}
+
+func TestPolicyDetachStagedDetail(t *testing.T) {
+	detail := policyDetachStagedDetail("deny-delete", "aws/r-abcd/ou-1")
+	for _, want := range []string{"deny-delete", "aws/r-abcd/ou-1", "staged for removal", "remains in force"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("detail should mention %q:\n%s", want, detail)
+		}
+	}
+}

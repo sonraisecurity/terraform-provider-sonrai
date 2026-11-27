@@ -112,6 +112,18 @@ func TestOrganizationPolicyReadsMappings(t *testing.T) {
 			t.Errorf("AttachedAt(%s) = %v, want %v", scope, got, want)
 		}
 	}
+	// A staged attachment is not in force, and a staged removal still is.
+	deployed := map[string]bool{
+		"aws/r-abcd/ou-1/222": false,
+		"aws/r-abcd/ou-2":     true,
+		"aws/r-abcd/ou-2/333": true,
+		"aws/r-abcd/ou-3":     false,
+	}
+	for scope, want := range deployed {
+		if got := detail.DeployedAt(scope); got != want {
+			t.Errorf("DeployedAt(%s) = %v, want %v", scope, got, want)
+		}
+	}
 }
 
 func TestOrganizationPolicyNotFound(t *testing.T) {

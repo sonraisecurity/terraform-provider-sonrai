@@ -156,8 +156,8 @@ func TestSyncRequiredDetailNamesEveryRootScope(t *testing.T) {
 	detail := syncRequiredDetail("breakglass", []client.CustomControlSync{
 		{RootScope: "aws/r-zzzz", Scopes: []string{"a"}},
 		{RootScope: "aws/r-abcd", Scopes: []string{"a", "b"}},
-	})
-	for _, want := range []string{"aws/r-abcd (2 scopes)", "aws/r-zzzz (1 scope)", "old list stays in force"} {
+	}, true)
+	for _, want := range []string{"aws/r-abcd (2 scopes)", "aws/r-zzzz (1 scope)", "old list stays in force", "in this apply"} {
 		if !strings.Contains(detail, want) {
 			t.Errorf("detail is missing %q:\n%s", want, detail)
 		}
