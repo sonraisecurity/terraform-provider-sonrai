@@ -103,8 +103,8 @@ func TestProviderServesOrganizationPolicies(t *testing.T) {
 	}
 }
 
-// TestOrganizationPolicySchemasStateWhatSurprises: a destroy that reaches
-// attachments this configuration never made, an edit that waits for a
+// TestOrganizationPolicySchemasStateWhatSurprises: a destroy that needs two
+// applies, an edit that waits for a
 // redeploy, and an attachment that cannot be told from inheritance all have to
 // be stated before anyone declares the resource.
 func TestOrganizationPolicySchemasStateWhatSurprises(t *testing.T) {
@@ -112,7 +112,7 @@ func TestOrganizationPolicySchemasStateWhatSurprises(t *testing.T) {
 	for _, want := range []string{
 		"rejected rather than adopted",
 		"needs a redeploy",
-		"removes it everywhere",
+		"cannot be destroyed in the same apply that detaches it",
 		"in force nowhere",
 		"does not keep policy names unique",
 	} {
@@ -222,9 +222,9 @@ func TestRootScopeDoesNotReplaceAfterImport(t *testing.T) {
 	}
 }
 
-func TestDeployedDestroyDetailNamesScopesAndRootScopes(t *testing.T) {
-	detail := deployedDestroyDetail("deny-delete", []string{"aws/r-abcd/ou-1", "aws/r-wxyz"}, []string{"aws/r-abcd", "aws/r-wxyz"})
-	for _, want := range []string{"deny-delete", "aws/r-abcd/ou-1", "whether or not this configuration", "aws/r-abcd, aws/r-wxyz", "stays in force"} {
+func TestPolicyStillDeployedDetailSaysItTakesTwoApplies(t *testing.T) {
+	detail := policyStillDeployedDetail("deny-delete", []string{"aws/r-abcd/ou-1", "aws/r-abcd/222"})
+	for _, want := range []string{"deny-delete", "aws/r-abcd/ou-1", "aws/r-abcd/222", "two applies", "Nothing has been changed"} {
 		if !strings.Contains(detail, want) {
 			t.Errorf("detail should mention %q:\n%s", want, detail)
 		}

@@ -85,11 +85,12 @@ func (r *organizationPolicyResource) Schema(_ context.Context, _ resource.Schema
 			"root scopes affected, which can include ones this configuration does not manage. Until it " +
 			"is deployed, the edit can be reverted from Pending Changes in the console, which the next " +
 			"plan reports as drift.\n\n" +
-			"~> **Destroying a policy removes it everywhere.** A policy that is deployed has its removal " +
-			"staged at every scope it reaches, including attachments made in the console or by another " +
-			"configuration, and is deleted once that is deployed. The plan warns with the scopes. The " +
-			"policy stays in force until the submission deploys, so keep a `sonrai_control_submission` " +
-			"whose `triggers` reference this resource.",
+			"~> **A policy that is attached cannot be destroyed in the same apply that detaches it.** " +
+			"The platform will not delete a policy that is still deployed, and detaching one only " +
+			"takes effect once that change is submitted and deployed. Remove the attachments and " +
+			"apply, then remove this resource and apply again. A plan that would destroy or replace a " +
+			"deployed policy is rejected, naming where it is deployed, before anything is changed. " +
+			"Attachments that were staged and never deployed are discarded with the policy.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "Identifier the platform gave the policy. Give it to " +
@@ -248,7 +249,7 @@ func (r *organizationPolicyResource) Configure(_ context.Context, req resource.C
 }
 
 // ModifyPlan checks the document and the name with the platform, settles
-// revision, and says what a destroy would reach.
+// revision, and refuses to destroy a policy that is still deployed.
 //
 // The platform answers a document it will not take with an error that carries
 // no reason, and never refuses a duplicate name. Both are therefore checked
@@ -259,7 +260,7 @@ func (r *organizationPolicyResource) ModifyPlan(ctx context.Context, req resourc
 		return
 	}
 	if req.Plan.Raw.IsNull() {
-		resp.Diagnostics.Append(r.warnDeployedDestroy(ctx, req)...)
+		resp.Diagnostics.Append(r.rejectDeployedDestroy(ctx, req)...)
 		return
 	}
 	var plan organizationPolicyModel
@@ -284,6 +285,13 @@ func (r *organizationPolicyResource) ModifyPlan(ctx context.Context, req resourc
 	}
 	replacing := !creating && (!plan.PolicyType.Equal(state.PolicyType) ||
 		(!state.RootScope.IsNull() && state.RootScope.ValueString() != "" && !plan.RootScope.Equal(state.RootScope)))
+
+	if replacing {
+		resp.Diagnostics.Append(r.rejectDeployedDestroy(ctx, req)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
 
 	contentChanged := creating || replacing || !sameDocument(plan.Content, state.Content)
 	nameChanged := creating || replacing || !plan.Name.Equal(state.Name)
@@ -375,10 +383,18 @@ func (r *organizationPolicyResource) rejectTakenName(ctx context.Context, plan o
 	return diags
 }
 
-// warnDeployedDestroy says where destroying the policy will remove it. Unlike
-// the plan, the platform does not stop at the attachments this configuration
-// made.
-func (r *organizationPolicyResource) warnDeployedDestroy(ctx context.Context, req resource.ModifyPlanRequest) diag.Diagnostics {
+// rejectDeployedDestroy fails a plan that would destroy, or replace, a policy
+// that is still deployed.
+//
+// Destroy cannot wait for the detach instead: Terraform holds back the
+// submission that would deploy it until this resource has been destroyed, so
+// the two would wait on each other. The platform's own delete of a deployed
+// policy does not help either. It stages the removal and promises to delete
+// the policy once that is deployed, but the policy is left behind, detached
+// and out of Terraform's sight, still holding its name. Failing at apply would
+// strand the detachments already staged. Refusing the plan leaves everything
+// as it was and says what to do first.
+func (r *organizationPolicyResource) rejectDeployedDestroy(ctx context.Context, req resource.ModifyPlanRequest) diag.Diagnostics {
 	var diags diag.Diagnostics
 	if req.State.Raw.IsNull() {
 		return diags
@@ -391,24 +407,24 @@ func (r *organizationPolicyResource) warnDeployedDestroy(ctx context.Context, re
 	detail, err := r.api.OrganizationPolicy(ctx, state.ID.ValueString())
 	if err != nil {
 		if !isNotFound(err) {
-			diags.AddWarning("Unable to read where the organization policy is deployed", err.Error())
+			diags.Append(diagnoseOrganizationPolicyError("Unable to read where the organization policy is deployed", err)...)
 		}
 		return diags
 	}
 	if detail.Deployed() {
-		diags.AddWarning("Destroying this organization policy removes it everywhere",
-			deployedDestroyDetail(state.Name.ValueString(), detail.DeployedScopes(), detail.DeployedRootScopes()))
+		diags.AddError("Organization policy is still deployed",
+			policyStillDeployedDetail(state.Name.ValueString(), detail.DeployedScopes()))
 	}
 	return diags
 }
 
-func deployedDestroyDetail(name string, scopes, rootScopes []string) string {
-	return fmt.Sprintf("%q is deployed at:\n\n  - %s\n\n"+
-		"Destroying it stages its removal at every one of those, whether or not this configuration "+
-		"attached it there, and the policy is deleted once that is deployed. It stays in force until "+
-		"then. A sonrai_control_submission whose triggers reference this resource deploys it in this "+
-		"apply; each of these root scopes needs submitting: %s.",
-		name, strings.Join(scopes, "\n  - "), strings.Join(rootScopes, ", "))
+func policyStillDeployedDetail(name string, scopes []string) string {
+	return fmt.Sprintf("%q cannot be destroyed or replaced while it is deployed, and it is deployed at:\n\n  - %s\n\n"+
+		"Detaching it only takes effect once that change has been submitted and deployed, so this takes "+
+		"two applies. First remove its attachments, keeping this resource as it is, and apply. Then "+
+		"remove or replace this resource and apply again. An attachment made by another configuration, "+
+		"or in the console, has to be detached there. Nothing has been changed.",
+		name, strings.Join(scopes, "\n  - "))
 }
 
 func (r *organizationPolicyResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -587,44 +603,25 @@ func (r *organizationPolicyResource) Delete(ctx context.Context, req resource.De
 		return
 	}
 
-	if !detail.Deployed() {
-		tflog.Info(ctx, "deleting organization policy", map[string]any{"id": id})
-		if err := r.api.UnmanageOrganizationPolicy(ctx, id); err != nil {
-			var live *client.PolicyStillLiveError
-			if errors.As(err, &live) {
-				resp.Diagnostics.AddError("Organization policy is being deployed",
-					fmt.Sprintf("%q cannot be deleted right now: %s. Apply again once the deployment has "+
-						"finished.", name, live.Error()))
-				return
-			}
-			resp.Diagnostics.Append(diagnoseOrganizationPolicyError("Unable to delete organization policy", err)...)
+	// The plan already refused a policy that was deployed. This catches one
+	// that was attached and deployed between the plan and now.
+	if detail.Deployed() {
+		resp.Diagnostics.AddError("Organization policy is still deployed",
+			policyStillDeployedDetail(name, detail.DeployedScopes()))
+		return
+	}
+
+	tflog.Info(ctx, "deleting organization policy", map[string]any{"id": id})
+	if err := r.api.UnmanageOrganizationPolicy(ctx, id); err != nil {
+		var live *client.PolicyStillLiveError
+		if errors.As(err, &live) {
+			resp.Diagnostics.AddError("Organization policy is being deployed",
+				fmt.Sprintf("%q cannot be deleted right now: %s. Apply again once the deployment has "+
+					"finished.", name, live.Error()))
+			return
 		}
-		return
-	}
-
-	// The platform refuses to delete a deployed policy while an attachment is
-	// staged and not yet deployed, with an error that does not say so. The
-	// attachments this configuration made have withdrawn theirs by now.
-	if staged := detail.StagedAdds(); len(staged) > 0 {
-		resp.Diagnostics.AddError("Organization policy has an attachment waiting to be deployed",
-			fmt.Sprintf("%q is deployed, and is also staged to be attached at:\n\n  - %s\n\n"+
-				"The platform will not delete it until that is deployed or withdrawn. Remove the staged "+
-				"attachment from Pending Changes, or submit it, then apply again.",
-				name, strings.Join(staged, "\n  - ")))
-		return
-	}
-
-	tflog.Info(ctx, "staging removal of organization policy everywhere it is deployed",
-		map[string]any{"id": id, "scopes": len(detail.DeployedScopes())})
-	if err := r.api.DeleteOrganizationPolicy(ctx, id); err != nil {
 		resp.Diagnostics.Append(diagnoseOrganizationPolicyError("Unable to delete organization policy", err)...)
-		resp.Diagnostics.AddWarning("Why the platform may have refused",
-			"The platform refuses to delete a deployed policy while anyone has an attachment of it staged "+
-				"and not yet deployed, and does not say so. Check Pending Changes for one staged by another user.")
-		return
 	}
-	resp.Diagnostics.AddWarning("Organization policy is removed when the submission deploys",
-		deployedDestroyDetail(name, detail.DeployedScopes(), detail.DeployedRootScopes()))
 }
 
 func (r *organizationPolicyResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

@@ -76,8 +76,9 @@ custom_controls = {
 # organizational unit already has the policy.
 #
 # A name a managed policy already has is rejected until it is imported.
-# Editing a deployed policy redeploys it in the same apply. Removing an entry
-# removes the policy everywhere it is attached, in the same apply.
+# Editing a deployed policy redeploys it in the same apply. To remove one that
+# is attached, empty its attach_to and apply, then remove it here and apply
+# again.
 organization_policies = {
   deny-leaving-organization = {
     description = "Accounts cannot remove themselves from the organization"

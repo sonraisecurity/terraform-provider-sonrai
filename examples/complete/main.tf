@@ -193,8 +193,7 @@ resource "sonrai_control_submission" "firewall" {
     # is what redeploys them.
     { for name, r in sonrai_custom_control.this : "custom_${name}" => r.revision },
     # Moves when a deployed organization policy is edited, which is what
-    # redeploys it. Destroying a deployed policy only stages its removal, and
-    # dropping its entry here is what submits that.
+    # redeploys it.
     { for name, r in sonrai_organization_policy.this : "policy_${name}" => r.revision },
     { for name, r in sonrai_organization_policy_attachment.this : "policy_attachment_${name}" => r.revision },
   )

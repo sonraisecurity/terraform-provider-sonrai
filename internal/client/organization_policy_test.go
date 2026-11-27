@@ -100,9 +100,6 @@ func TestOrganizationPolicyReadsMappings(t *testing.T) {
 	if got := detail.DeployedRootScopes(); !reflect.DeepEqual(got, []string{"aws/r-abcd"}) {
 		t.Errorf("DeployedRootScopes = %v", got)
 	}
-	if got := detail.StagedAdds(); !reflect.DeepEqual(got, []string{"aws/r-abcd/ou-1/222"}) {
-		t.Errorf("StagedAdds = %v", got)
-	}
 	attached := map[string]bool{
 		"aws/r-abcd/ou-1/222": true,  // staged to be attached
 		"aws/r-abcd/ou-2":     true,  // deployed

@@ -8,7 +8,7 @@ description: |-
   Defining a policy takes effect in Sonrai as soon as it is applied, and on its own it is in force nowhere. Attach it with sonrai_organization_policy_attachment; that part is staged and submitted like any other control.
   The platform does not keep policy names unique. A managed policy that already has this name -- made in the console, or by another configuration -- is rejected rather than adopted; import it instead.
   ~> Editing a policy that is deployed needs a redeploy. The definition changes at once, but everywhere it is deployed keeps enforcing the old document until its root scope is submitted and deployed again. Reference revision in the triggers of each sonrai_control_submission and that happens in the same apply. The apply warns with the root scopes affected, which can include ones this configuration does not manage. Until it is deployed, the edit can be reverted from Pending Changes in the console, which the next plan reports as drift.
-  ~> Destroying a policy removes it everywhere. A policy that is deployed has its removal staged at every scope it reaches, including attachments made in the console or by another configuration, and is deleted once that is deployed. The plan warns with the scopes. The policy stays in force until the submission deploys, so keep a sonrai_control_submission whose triggers reference this resource.
+  ~> A policy that is attached cannot be destroyed in the same apply that detaches it. The platform will not delete a policy that is still deployed, and detaching one only takes effect once that change is submitted and deployed. Remove the attachments and apply, then remove this resource and apply again. A plan that would destroy or replace a deployed policy is rejected, naming where it is deployed, before anything is changed. Attachments that were staged and never deployed are discarded with the policy.
 ---
 
 # sonrai_organization_policy (Resource)
@@ -23,7 +23,7 @@ The platform does not keep policy names unique. A managed policy that already ha
 
 ~> **Editing a policy that is deployed needs a redeploy.** The definition changes at once, but everywhere it is deployed keeps enforcing the old document until its root scope is submitted and deployed again. Reference `revision` in the `triggers` of each `sonrai_control_submission` and that happens in the same apply. The apply warns with the root scopes affected, which can include ones this configuration does not manage. Until it is deployed, the edit can be reverted from Pending Changes in the console, which the next plan reports as drift.
 
-~> **Destroying a policy removes it everywhere.** A policy that is deployed has its removal staged at every scope it reaches, including attachments made in the console or by another configuration, and is deleted once that is deployed. The plan warns with the scopes. The policy stays in force until the submission deploys, so keep a `sonrai_control_submission` whose `triggers` reference this resource.
+~> **A policy that is attached cannot be destroyed in the same apply that detaches it.** The platform will not delete a policy that is still deployed, and detaching one only takes effect once that change is submitted and deployed. Remove the attachments and apply, then remove this resource and apply again. A plan that would destroy or replace a deployed policy is rejected, naming where it is deployed, before anything is changed. Attachments that were staged and never deployed are discarded with the policy.
 
 ## Example Usage
 

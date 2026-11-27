@@ -1271,16 +1271,20 @@ deployed, so the next apply submits it. Until it is deployed, an edit can be
 reverted from Pending Changes in the console; the next plan reports that as
 drift and puts the edit back.
 
-**Destroying a policy removes it everywhere.** One that is attached nowhere is
-deleted at once. One that is deployed has its removal staged at every scope it
-reaches, and is deleted when that is deployed, so removing the policy and its
-attachments from the configuration takes one apply. This is not limited to the
-attachments this configuration made: an attachment made in the console, or by
-another configuration, goes too. The plan warns with the scopes. The policy
-stays in force until the submission deploys, which is why the submission's
-`triggers` have to reference it: dropping its entry is what submits the
-removal. Attachments that were staged and never deployed are discarded with
-the policy.
+**Removing one that is attached takes two applies.** The platform will not
+delete a policy that is still deployed, and detaching one only takes effect
+once that change is submitted and deployed. So:
+
+1. Remove its `sonrai_organization_policy_attachment` resources, keep the
+   policy, and apply. The submission deploys the detachment.
+2. Remove the policy and apply again.
+
+A plan that would destroy a deployed policy in one step is rejected, naming
+the scopes it is deployed at, before anything is changed. The same goes for a
+change that replaces it, such as a new `policy_type`, and for a
+`terraform destroy` of the whole configuration. An attachment made in the
+console or by another configuration has to be detached there first.
+Attachments that were staged and never deployed are discarded with the policy.
 
 The token's identity needs the `edit.cloudcontrols` permission. Changing a
 policy changes it everywhere it is attached, so an identity restricted to part

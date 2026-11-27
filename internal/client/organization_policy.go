@@ -88,18 +88,6 @@ func (d *OrganizationPolicyDetail) AttachedAt(scope string) bool {
 	return adding || (applied && !removing)
 }
 
-// StagedAdds lists the scopes this identity has staged the policy for and not
-// yet deployed.
-func (d *OrganizationPolicyDetail) StagedAdds() []string {
-	var scopes []string
-	for _, m := range d.Staged {
-		if m.Action == policyMappingAdd {
-			scopes = append(scopes, m.Scope)
-		}
-	}
-	return topmostScopes(scopes)
-}
-
 // DeployedScopes lists the topmost scopes the policy is deployed at.
 func (d *OrganizationPolicyDetail) DeployedScopes() []string {
 	scopes := make([]string, 0, len(d.Applied))
@@ -338,6 +326,10 @@ mutation unmanageOrganizationPolicy($input: UnmanageOrganizationPolicyInput!) {
 //
 // The platform answers a policy that is still deployed with success false
 // rather than an error, which comes back as a *PolicyStillLiveError.
+//
+// The platform's DeleteOrganizationPolicy is deliberately not used for a
+// deployed policy. It stages the removal everywhere and marks the policy for
+// deletion, but once that deploys the policy is left in place, detached.
 func (c *Client) UnmanageOrganizationPolicy(ctx context.Context, id string) error {
 	if id == "" {
 		return errors.New("an organization policy id is required")
@@ -364,37 +356,6 @@ func (c *Client) UnmanageOrganizationPolicy(ctx context.Context, id string) erro
 	}
 	live.Scopes = topmostScopes(live.Scopes)
 	return live
-}
-
-const deleteOrganizationPolicyMutation = `
-mutation deleteOrganizationPolicy($input: DeleteOrganizationPolicyInput!) {
-  DeleteOrganizationPolicy(input: $input) {
-    success
-  }
-}`
-
-// DeleteOrganizationPolicy removes a policy wherever it is.
-//
-// One that is deployed nowhere is deleted at once. One that is deployed has
-// its removal staged at every scope it reaches, in every organization, and is
-// deleted when that has been deployed; until then it stays in force. The
-// platform refuses while an attachment is staged and not yet deployed.
-func (c *Client) DeleteOrganizationPolicy(ctx context.Context, id string) error {
-	if id == "" {
-		return errors.New("an organization policy id is required")
-	}
-	var out struct {
-		DeleteOrganizationPolicy struct {
-			Success bool `json:"success"`
-		} `json:"DeleteOrganizationPolicy"`
-	}
-	if err := c.ExecuteOnce(ctx, deleteOrganizationPolicyMutation, map[string]any{"input": map[string]any{"id": id}}, &out); err != nil {
-		return err
-	}
-	if !out.DeleteOrganizationPolicy.Success {
-		return fmt.Errorf("DeleteOrganizationPolicy reported failure for %q", id)
-	}
-	return nil
 }
 
 const attachOrganizationPolicyMutation = `
