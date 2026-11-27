@@ -23,6 +23,20 @@ locals {
   # afresh and redeploys.
   deployed = var.submit && !var.reset
 
+  root_id = reverse(split("/", var.root_scope))[0]
+
+  # A control key naming an entry in custom_controls stands for that control's
+  # real key. Going through the resource is also what makes Terraform define
+  # the control before attaching it, and detach it before deleting it.
+  custom_control_keys = { for name, c in sonrai_custom_control.this : name => c.control_key }
+
+  # One entry per policy and target, keyed "name@target_id".
+  policy_attachments = merge([
+    for name, p in var.organization_policies : {
+      for target in p.attach_to : "${name}@${target}" => { policy = name, resource_id = target }
+    }
+  ]...)
+
   # One entry per account and service, keyed "control_key@account_id". Each
   # becomes its own sonrai_account_disabled_service, so a service already
   # disabled outside this configuration is rejected rather than silently taken
@@ -58,12 +72,48 @@ data "sonrai_deploy_account" "firewall" {
 # CloudFormation will fetch the template with.
 data "aws_caller_identity" "current" {}
 
+# A custom control belongs to the whole organization and is defined as soon as
+# it is applied. It protects nothing until protected_services or
+# disabled_services names it, and that part is staged like any other control.
+resource "sonrai_custom_control" "this" {
+  for_each = var.custom_controls
+
+  title       = each.value.title
+  description = each.value.description
+  cloud_type  = each.value.cloud_type
+  permissions = each.value.permissions
+}
+
+# An organization policy is a service control or resource control policy of
+# your own. Defining one takes effect as soon as it is applied and is in force
+# nowhere; the attachments below are staged like any other control.
+resource "sonrai_organization_policy" "this" {
+  for_each = var.organization_policies
+
+  root_scope  = var.root_scope
+  name        = coalesce(each.value.name, each.key)
+  policy_type = each.value.policy_type
+  description = each.value.description
+  content     = each.value.content
+}
+
+# The policy applies at the target and everything beneath it. Attach at one
+# level of a branch: an account under an attached organizational unit already
+# has the policy.
+resource "sonrai_organization_policy_attachment" "this" {
+  for_each = local.policy_attachments
+
+  policy_id   = sonrai_organization_policy.this[each.value.policy].id
+  root_scope  = var.root_scope
+  resource_id = each.value.resource_id
+}
+
 resource "sonrai_account_disabled_service" "this" {
   for_each = local.disabled_services
 
   root_scope  = var.root_scope
   resource_id = each.value.resource_id
-  control_key = each.value.control_key
+  control_key = lookup(local.custom_control_keys, each.value.control_key, each.value.control_key)
 }
 
 resource "sonrai_account_protected_service" "this" {
@@ -71,7 +121,7 @@ resource "sonrai_account_protected_service" "this" {
 
   root_scope           = var.root_scope
   resource_id          = each.value.resource_id
-  control_key          = each.value.control_key
+  control_key          = lookup(local.custom_control_keys, each.value.control_key, each.value.control_key)
   exempt_identities    = each.value.exempt_identities
   exempt_sso_actor_ids = each.value.exempt_sso_actor_ids
 }
@@ -79,7 +129,10 @@ resource "sonrai_account_protected_service" "this" {
 resource "sonrai_exempted_identity" "this" {
   for_each = var.exempted_identities
 
-  scope       = coalesce(each.value.scope, var.root_scope)
+  root_scope = var.root_scope
+  # The root's own id, the last part of its scope, exempts across the whole
+  # organization.
+  resource_id = coalesce(each.value.resource_id, local.root_id)
   identity    = each.value.identity
   sso         = each.value.sso
   exempt_from = each.value.exempt_from
@@ -96,12 +149,28 @@ resource "sonrai_region_control" "this" {
 
 # Authoritative for each scope named: whatever the scope already has is
 # replaced by what is declared here, including enrolments made in the console.
+#
+# Keys are ids, resolved to their path on every run, so an account moved to
+# another organizational unit needs no change here.
 resource "sonrai_jit_configuration" "this" {
   for_each = var.jit_configurations
 
-  scope                 = each.key
+  root_scope            = var.root_scope
+  resource_id           = each.key
   deny_first            = each.value.deny_first
   enrolled_entitlements = each.value.enrolled_entitlements
+}
+
+# Approvers are not staged: this takes effect as soon as it is applied, so it
+# has no revision and stays out of the submission's triggers below. Approver
+# exceptions set on a scope in the console are kept.
+resource "sonrai_approvers" "this" {
+  for_each = var.approvers
+
+  root_scope    = var.root_scope
+  resource_id   = each.key
+  approvers     = each.value.approvers
+  approval_type = each.value.approval_type
 }
 
 resource "sonrai_control_submission" "firewall" {
@@ -109,17 +178,23 @@ resource "sonrai_control_submission" "firewall" {
 
   root_scope = var.root_scope
 
+  # revision changes whenever its resource stages anything, including a plan
+  # that only reverts a change made outside Terraform. A trigger built from
+  # configured values would not move in that case, and the revert would be
+  # staged without being submitted.
   triggers = merge(
-    { for name, r in sonrai_account_disabled_service.this : "disabled_${name}" => r.id },
-    { for name, r in sonrai_account_protected_service.this : "protected_${name}" => r.id },
-    { for name, r in sonrai_exempted_identity.this : "exempt_${name}" => join("|", sort(r.exempt_from)) },
-    { for name, r in sonrai_region_control.this : "region_${name}" => r.state },
-    {
-      for scope, r in sonrai_jit_configuration.this : "jit_${scope}" => sha256(jsonencode({
-        deny_first   = r.deny_first
-        entitlements = sort([for e in r.enrolled_entitlements : "${e.type}:${e.name}:${e.auto_pod}"])
-      }))
-    },
+    { for name, r in sonrai_account_disabled_service.this : "disabled_${name}" => r.revision },
+    { for name, r in sonrai_account_protected_service.this : "protected_${name}" => r.revision },
+    { for name, r in sonrai_exempted_identity.this : "exempt_${name}" => r.revision },
+    { for name, r in sonrai_region_control.this : "region_${name}" => r.revision },
+    { for target, r in sonrai_jit_configuration.this : "jit_${target}" => r.revision },
+    # Moves when the permissions of a deployed custom control are edited, which
+    # is what redeploys them.
+    { for name, r in sonrai_custom_control.this : "custom_${name}" => r.revision },
+    # Moves when a deployed organization policy is edited, which is what
+    # redeploys it.
+    { for name, r in sonrai_organization_policy.this : "policy_${name}" => r.revision },
+    { for name, r in sonrai_organization_policy_attachment.this : "policy_attachment_${name}" => r.revision },
   )
 
   # Checked before anything is submitted. Getting this wrong leaves a live

@@ -37,9 +37,38 @@ output "regions" {
 
 output "jit" {
   value = {
-    for scope, r in sonrai_jit_configuration.this : scope => {
+    for target, r in sonrai_jit_configuration.this : target => {
+      scope      = r.scope
       deny_first = r.deny_first
       auto_pod   = sort([for e in r.enrolled_entitlements : e.name if e.auto_pod])
+    }
+  }
+}
+
+output "custom_controls" {
+  value = {
+    for name, r in sonrai_custom_control.this : name => {
+      control_key = r.control_key
+      permissions = r.permissions
+    }
+  }
+}
+
+output "organization_policies" {
+  value = {
+    for name, r in sonrai_organization_policy.this : name => {
+      id          = r.id
+      attached_to = sort([for a in sonrai_organization_policy_attachment.this : a.scope if a.policy_id == r.id])
+    }
+  }
+}
+
+output "approvers" {
+  value = {
+    for target, r in sonrai_approvers.this : target => {
+      scope         = r.scope
+      approvers     = r.approvers
+      approval_type = r.approval_type
     }
   }
 }

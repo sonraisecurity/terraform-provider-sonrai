@@ -220,50 +220,101 @@ func (c *Client) WaitForTransactionStatus(ctx context.Context, transactionID, ta
 	}
 }
 
-// deployedTemplateLookback bounds how far back DeployedTemplateLocation looks.
-// Submissions that alter nothing deployable (JIT changes, console submits,
-// maintenance) produce no template, so the deployed one can sit some way
-// behind the newest transaction.
-const deployedTemplateLookback = 100
+// Transactions that alter nothing deployable (exemptions in an account with no
+// control, JIT changes, console submits, maintenance) produce no template, and
+// an organization can run any number of them in a row. So the search for the
+// deployed template pages back until it finds one rather than stopping at the
+// first page -- an empty answer hands the firewall stack an empty template_url.
+//
+// The page cap exists only so a misbehaving API cannot make this loop forever.
+// Reaching it is an error, not "no template": the two must not be confused.
+const (
+	deployedTemplatePageSize = 100
+	deployedTemplateMaxPages = 100
+)
 
 const recentTransactionsQuery = `
-query recentControlTransactions($rootScope: String!, $limit: Long) {
+query recentControlTransactions($rootScope: String!, $limit: Long, $offset: Long) {
   ControlTransactions(where: {rootScope: {op: EQ, value: $rootScope}}) {
-    items(orderBy: {createdDate: {order: DESC}}, limit: $limit) {
+    items(orderBy: {createdDate: {order: DESC}}, limit: $limit, offset: $offset) {
       transactionId
       status
+      statusMsg
       rootScope
       templateLocation
     }
   }
 }`
 
+// LatestCompletedTransaction returns the most recent transaction under
+// rootScope that completed, or ErrNotFound when none has.
+func (c *Client) LatestCompletedTransaction(ctx context.Context, rootScope string) (*Transaction, error) {
+	for page := 0; page < deployedTemplateMaxPages; page++ {
+		var out struct {
+			ControlTransactions struct {
+				Items []Transaction `json:"items"`
+			} `json:"ControlTransactions"`
+		}
+		vars := map[string]any{
+			"rootScope": rootScope,
+			"limit":     deployedTemplatePageSize,
+			"offset":    page * deployedTemplatePageSize,
+		}
+		if err := c.Execute(ctx, recentTransactionsQuery, vars, &out); err != nil {
+			return nil, err
+		}
+		for _, t := range out.ControlTransactions.Items {
+			if t.RootScope != "" && t.RootScope != rootScope {
+				return nil, fmt.Errorf("transactions for %q came back for %q", rootScope, t.RootScope)
+			}
+			if NormalizeStatus(t.Status) == StatusCompleted {
+				found := t
+				return &found, nil
+			}
+		}
+		if len(out.ControlTransactions.Items) < deployedTemplatePageSize {
+			break
+		}
+	}
+	return nil, fmt.Errorf("%w: no completed transaction under %q", ErrNotFound, rootScope)
+}
+
 // DeployedTemplateLocation returns the template of the most recent completed
 // transaction under rootScope that produced one, which is the template the
-// firewall stack is running. It returns "" when none of the recent
-// transactions produced a template.
+// firewall stack is running. It returns "" only when no transaction under
+// rootScope has ever completed with a template.
 //
 // A transaction reaches COMPLETED only once its template is deployed, so a
 // failed or still-running one is never taken for the deployed template.
 func (c *Client) DeployedTemplateLocation(ctx context.Context, rootScope string) (string, error) {
-	var out struct {
-		ControlTransactions struct {
-			Items []Transaction `json:"items"`
-		} `json:"ControlTransactions"`
-	}
-	vars := map[string]any{"rootScope": rootScope, "limit": deployedTemplateLookback}
-	if err := c.Execute(ctx, recentTransactionsQuery, vars, &out); err != nil {
-		return "", err
-	}
-	for _, t := range out.ControlTransactions.Items {
-		// The filter is EQ; anything else is a template from another
-		// organization's firewall and must not be deployed here.
-		if t.RootScope != "" && t.RootScope != rootScope {
-			return "", fmt.Errorf("transactions for %q came back for %q", rootScope, t.RootScope)
+	for page := 0; page < deployedTemplateMaxPages; page++ {
+		var out struct {
+			ControlTransactions struct {
+				Items []Transaction `json:"items"`
+			} `json:"ControlTransactions"`
 		}
-		if t.TemplateLocation != "" && NormalizeStatus(t.Status) == StatusCompleted {
-			return t.TemplateLocation, nil
+		vars := map[string]any{
+			"rootScope": rootScope,
+			"limit":     deployedTemplatePageSize,
+			"offset":    page * deployedTemplatePageSize,
+		}
+		if err := c.Execute(ctx, recentTransactionsQuery, vars, &out); err != nil {
+			return "", err
+		}
+		for _, t := range out.ControlTransactions.Items {
+			// The filter is EQ; anything else is a template from another
+			// organization's firewall and must not be deployed here.
+			if t.RootScope != "" && t.RootScope != rootScope {
+				return "", fmt.Errorf("transactions for %q came back for %q", rootScope, t.RootScope)
+			}
+			if t.TemplateLocation != "" && NormalizeStatus(t.Status) == StatusCompleted {
+				return t.TemplateLocation, nil
+			}
+		}
+		if len(out.ControlTransactions.Items) < deployedTemplatePageSize {
+			return "", nil
 		}
 	}
-	return "", nil
+	return "", fmt.Errorf("no deployed template found for %q in its %d most recent transactions",
+		rootScope, deployedTemplatePageSize*deployedTemplateMaxPages)
 }

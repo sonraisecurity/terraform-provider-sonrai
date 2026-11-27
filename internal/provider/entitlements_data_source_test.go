@@ -28,8 +28,15 @@ func TestEntitlementsSchemaIsValid(t *testing.T) {
 func TestEntitlementsAttributes(t *testing.T) {
 	attrs := entitlementsSchema(t).Attributes
 
-	if attr, ok := attrs["scope"]; !ok || !attr.IsRequired() {
-		t.Error("scope should be required")
+	// scope stays settable for configurations written against 0.1, so none of
+	// the three can be required.
+	if attr, ok := attrs["scope"]; !ok || !attr.IsOptional() || !attr.IsComputed() {
+		t.Error("scope should be optional and computed")
+	}
+	for _, name := range []string{"root_scope", "resource_id"} {
+		if attr, ok := attrs[name]; !ok || !attr.IsOptional() || attr.IsComputed() {
+			t.Errorf("%s should be optional and not computed", name)
+		}
 	}
 	if attr, ok := attrs["type"]; !ok || !attr.IsOptional() {
 		t.Error("type should be optional")

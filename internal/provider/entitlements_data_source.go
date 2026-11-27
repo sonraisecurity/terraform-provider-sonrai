@@ -4,9 +4,11 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/datasourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
@@ -36,6 +38,8 @@ type entitlementModel struct {
 type entitlementsModel struct {
 	ID           types.String       `tfsdk:"id"`
 	Scope        types.String       `tfsdk:"scope"`
+	RootScope    types.String       `tfsdk:"root_scope"`
+	ResourceID   types.String       `tfsdk:"resource_id"`
 	Type         types.String       `tfsdk:"type"`
 	Names        types.Set          `tfsdk:"names"`
 	Entitlements []entitlementModel `tfsdk:"entitlements"`
@@ -47,8 +51,9 @@ func (d *entitlementsDataSource) Metadata(_ context.Context, req datasource.Meta
 
 func (d *entitlementsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "AWS entitlements available at a scope: Identity Center permission " +
-			"sets, account access roles and SAML roles.\n\n" +
+		MarkdownDescription: "AWS entitlements available at an account, organizational unit or " +
+			"root, named by `root_scope` and `resource_id`: Identity Center permission sets, account " +
+			"access roles and SAML roles.\n\n" +
 			"`sonrai_jit_configuration` enrols entitlements by name, and a name that matches nothing " +
 			"enrols nothing without reporting an error. Read them here rather than copying them out " +
 			"of the console.\n\n" +
@@ -61,11 +66,31 @@ func (d *entitlementsDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 				MarkdownDescription: "The scope these entitlements were read at.",
 				Computed:            true,
 			},
-			"scope": schema.StringAttribute{
-				MarkdownDescription: "Scope to read entitlements at, for example " +
-					"`aws/r-abcd/123456789012`.",
-				Required: true,
+			"root_scope": schema.StringAttribute{
+				MarkdownDescription: "Cloud organization root scope, for example `aws/r-abcd`.",
+				Optional:            true,
 				Validators: []validator.String{
+					stringvalidator.LengthAtMost(1024),
+					stringvalidator.RegexMatches(awsScopePattern, "must be an aws/ scope; entitlements are AWS only for now"),
+				},
+			},
+			"resource_id": schema.StringAttribute{
+				MarkdownDescription: "Cloud-native id of where to read entitlements: an account such " +
+					"as `123456789012`, an organizational unit such as `ou-ab12-cdef3456`, or the " +
+					"root itself, such as `r-abcd`.",
+				Optional: true,
+				Validators: []validator.String{
+					stringvalidator.LengthBetween(1, 256),
+					stringvalidator.RegexMatches(hierarchyResourceIDPattern,
+						"must be a cloud resource id, not a scope path"),
+				},
+			},
+			"scope": schema.StringAttribute{
+				MarkdownDescription: "Scope path `resource_id` resolved to.",
+				Optional:            true,
+				Computed:            true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtMost(1024),
 					stringvalidator.RegexMatches(awsScopePattern, "must be an aws/ scope; entitlements are AWS only for now"),
 				},
 			},
@@ -112,6 +137,13 @@ func (d *entitlementsDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 	}
 }
 
+func (d *entitlementsDataSource) ConfigValidators(context.Context) []datasource.ConfigValidator {
+	return []datasource.ConfigValidator{
+		datasourcevalidator.ExactlyOneOf(path.MatchRoot("scope"), path.MatchRoot("resource_id")),
+		datasourcevalidator.RequiredTogether(path.MatchRoot("root_scope"), path.MatchRoot("resource_id")),
+	}
+}
+
 func (d *entitlementsDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
 	if api := configureClient(req.ProviderData, &resp.Diagnostics); api != nil {
 		d.api = api
@@ -126,6 +158,15 @@ func (d *entitlementsDataSource) Read(ctx context.Context, req datasource.ReadRe
 	}
 
 	scope := config.Scope.ValueString()
+	if !config.ResourceID.IsNull() {
+		resolved, err := scopeByID(ctx, d.api, config.RootScope, config.ResourceID)
+		if err != nil {
+			resp.Diagnostics.Append(diagnoseScopeByID(config.RootScope, config.ResourceID, err)...)
+			return
+		}
+		scope = resolved
+		config.Scope = types.StringValue(scope)
+	}
 	entitlements, err := d.api.Entitlements(ctx, scope)
 	if err != nil {
 		resp.Diagnostics.Append(diagnoseAPIError("Unable to read entitlements", err)...)

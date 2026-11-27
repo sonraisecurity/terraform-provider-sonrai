@@ -56,6 +56,7 @@ type regionControlModel struct {
 	Scope         types.String `tfsdk:"scope"`
 	Status        types.String `tfsdk:"status"`
 	Pending       types.Bool   `tfsdk:"pending"`
+	Revision      types.String `tfsdk:"revision"`
 	Critical      types.Bool   `tfsdk:"critical"`
 	RegionName    types.String `tfsdk:"region_name"`
 }
@@ -159,6 +160,7 @@ func (r *regionControlResource) Schema(_ context.Context, _ resource.SchemaReque
 					"submitted and deployed.",
 				Computed: true,
 			},
+			"revision": revisionAttribute(),
 			"critical": schema.BoolAttribute{
 				MarkdownDescription: "Whether the platform treats this region as critical. A critical " +
 					"region cannot be disabled.",
@@ -266,6 +268,7 @@ func (r *regionControlResource) Read(ctx context.Context, req resource.ReadReque
 	state.Pending = types.BoolValue(region.Pending)
 	state.Critical = types.BoolValue(region.Critical)
 	state.RegionName = types.StringValue(region.RegionName)
+	ensureRevision(&state.Revision)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -478,6 +481,7 @@ func (r *regionControlResource) apply(ctx context.Context, m *regionControlModel
 		m.PreviousState = types.StringValue(regionStateFor(before))
 	}
 	m.ID = types.StringValue(regionControlID(*m))
+	m.Revision = newRevision()
 
 	tflog.Info(ctx, "staging region control", map[string]any{
 		"region_id": regionID, "scope": scope, "state": want,

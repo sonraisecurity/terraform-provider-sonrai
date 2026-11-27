@@ -57,4 +57,4 @@ output "scopes" {
 - `id` (String) Same as `scope`.
 - `name` (String) Display name of the account, project or subscription.
 - `parent_scope` (String) Scope of the OU, folder or management group directly above this entry.
-- `scope` (String) Canonical scope path. Pass this to a control resource's `scope`.
+- `scope` (String) Canonical scope path, for reference. Resources take `root_scope` and `resource_id` and resolve this themselves.

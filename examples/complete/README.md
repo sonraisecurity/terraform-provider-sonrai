@@ -2,8 +2,13 @@
 
 One root module covering the whole cycle: disable services, protect services
 with exemptions, exempt identities from whole control classes, disable regions,
-configure Just-in-Time access, submit, and deploy the resulting CloudFormation
-template.
+configure Just-in-Time access, define custom controls and organization
+policies, assign approvers,
+submit, and deploy the resulting CloudFormation template.
+
+Accounts, organizational units and the root are named by their cloud-native id
+throughout; nothing needs a full scope path. Approvers are the one thing here
+that is not staged: they take effect on apply, whether or not `submit` is set.
 
 Everything is driven from `terraform.tfvars`. Replace the account ids, root
 scope and identities with your own.

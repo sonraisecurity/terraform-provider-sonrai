@@ -43,6 +43,10 @@ an organization's controls lives nowhere you can review or diff.
 | `sonrai_jit_configuration` | Just-in-Time access at a scope |
 | `sonrai_control_submission` | Submission of everything staged under a root scope |
 | `sonrai_control_reset` | Organization-wide rollback of applied controls to staged |
+| `sonrai_approvers` | Who approves access requests at a scope, and who is allowed to |
+| `sonrai_custom_control` | A custom control: a named group of permissions to protect or block |
+| `sonrai_organization_policy` | A service control or resource control policy of your own (AWS) |
+| `sonrai_organization_policy_attachment` | An organization policy attached to an account, OU or root |
 
 ### Data sources
 
@@ -52,7 +56,10 @@ an organization's controls lives nowhere you can review or diff.
 | `sonrai_deploy_account` | The account a root scope's template deploys into |
 | `sonrai_suggested_exemptions` | Identities the platform would exempt when protecting a service |
 | `sonrai_entitlements` | AWS permission sets, account access roles and SAML roles at a scope |
+| `sonrai_custom_controls` | The custom controls defined in the organization, and where each is deployed |
+| `sonrai_organization_policies` | The organization policies in an AWS organization, and where each is attached |
 | `sonrai_control_transaction` | A submission's progress, optionally waiting for it to finish |
+| `sonrai_pending_changes` | What a submission under a root scope would deploy if it ran now |
 
 Per-attribute reference for each of these is in [`GUIDE.md`](GUIDE.md) and on
 the [Terraform Registry](https://registry.terraform.io/providers/sonraisecurity/sonrai/latest/docs),
@@ -257,8 +264,8 @@ resource "sonrai_control_submission" "firewall" {
   root_scope = "aws/r-abcd"
 
   triggers = {
-    cloud9_prod = sonrai_account_disabled_service.cloud9_prod.id
-    iam_prod    = sonrai_account_protected_service.iam_prod.id
+    cloud9_prod = sonrai_account_disabled_service.cloud9_prod.revision
+    iam_prod    = sonrai_account_protected_service.iam_prod.revision
   }
 }
 
@@ -281,23 +288,36 @@ data "sonrai_control_transaction" "firewall" {
 }
 ```
 
-List the controls a submission covers in `triggers`, so that changing any of
-them produces a new submission. A submission covers **every** change staged
-under its root scope, including changes staged from the console — use one per
-root scope and avoid concurrent applies against the same one.
+List the `revision` of every control a submission covers in `triggers`. A
+resource's `revision` changes whenever it stages something, so the submission
+runs again for a new control, a changed one, a removed one, and a plan that
+only reverts a change made outside Terraform.
+
+A submission covers **every** change the token's identity has staged under its
+root scope, whether or not this configuration staged it, along with changes the
+platform has queued for the whole organization, such as denies for newly
+discovered third parties. Changes another user staged are left for that user to
+submit. Give each configuration its own App identity, use one submission per
+root scope, and avoid concurrent applies against the same one.
+
+A plan that will submit warns when changes are already pending, and names
+them: they are deployed along with everything the plan shows.
+`sonrai_pending_changes` lists the same changes for use in outputs and checks.
 
 ### Exempt an identity from whole classes of control
 
 ```hcl
 resource "sonrai_exempted_identity" "break_glass" {
-  scope       = "aws/r-abcd"
+  root_scope  = "aws/r-abcd"
+  resource_id = "r-abcd"
   identity    = "*e/BreakGlass"
   exempt_from = ["service_protect", "service_block"]
 }
 ```
 
-Identities are matched as patterns, so one entry covers every account under the
-scope. AWS only.
+`resource_id` is the root's own id here, which exempts across the whole
+organization; give an account or organizational unit id to limit it. Identities
+are matched as patterns, so one entry covers every account beneath. AWS only.
 
 ### ARNs and patterns
 
@@ -305,7 +325,7 @@ Where an identity is given decides whether a pattern is allowed:
 
 | Where | Form |
 |---|---|
-| `sonrai_exempted_identity.identity` | The smallest pattern that names the identity, such as `*e/BreakGlass`, even for a single account: `scope` limits it to the account. |
+| `sonrai_exempted_identity.identity` | The smallest pattern that names the identity, such as `*e/BreakGlass`, even for a single account: `resource_id` limits it to the account. |
 | `sonrai_account_protected_service.exempt_identities` | Full ARN, including the account id. **Patterns are not supported.** |
 | `sonrai_suggested_exemptions.identities` | Always full ARNs, ready for `exempt_identities`. |
 | `exempt_sso_actor_ids`, or `identity` with `sso = true` | The SSO actor id, not an ARN. |
@@ -340,8 +360,9 @@ the account had before, recorded in `previous_state`.
 
 ```hcl
 resource "sonrai_jit_configuration" "sandbox" {
-  scope      = "aws/r-abcd/123456789012"
-  deny_first = true
+  root_scope  = "aws/r-abcd"
+  resource_id = "123456789012"
+  deny_first  = true
 
   enrolled_entitlements = [
     { name = "PowerUserAccess" },
@@ -529,9 +550,12 @@ Set these in `terraform.tfvars`:
 | `root_scope` | string | `aws/r-abcd` | Cloud organization root scope |
 | `disabled_services` | map(set(string)) | `{}` | Account id => control keys to disable, e.g. `"123456789012" = ["cloud9"]` |
 | `protected_services` | map(object) | `{}` | `resource_id`, `control_key`, `exempt_identities`, `exempt_sso_actor_ids` |
-| `exempted_identities` | map(object) | `{}` | `identity`, `exempt_from`, `sso`, `scope` |
+| `exempted_identities` | map(object) | `{}` | `identity`, `exempt_from`, `sso`, `resource_id` (an account or OU id; omit for the whole organization) |
 | `region_controls` | map(map(string)) | `{}` | Account id => region id => `disabled` or `enabled`, e.g. `"123456789012" = { "ap-south-1" = "disabled" }` |
-| `jit_configurations` | map(object) | `{}` | Keyed by scope: `deny_first`, `enrolled_entitlements` (`name`, `type`, `auto_pod`) |
+| `jit_configurations` | map(object) | `{}` | Keyed by account, OU or root id: `deny_first`, `enrolled_entitlements` (`name`, `type`, `auto_pod`) |
+| `custom_controls` | map(object) | `{}` | Keyed by a name of your choosing: `title`, `description`, `permissions`, `cloud_type`. Use the name as a control key in `protected_services` or `disabled_services` to attach it |
+| `organization_policies` | map(object) | `{}` | Keyed by name: `content` (JSON), `policy_type`, `name`, `description`, `attach_to` (account, OU or root ids). AWS only |
+| `approvers` | map(object) | `{}` | Keyed by account, OU or root id: `approvers`, `approval_type`. Takes effect on apply, without `submit` |
 | `submit` | bool | `false` | Submit the staged changes and deploy the template |
 | `reset` | bool | `false` | Tear the deployment down and return every control to staged |
 | `reset_confirm` | string | `""` | Must repeat `root_scope` to arm a reset |

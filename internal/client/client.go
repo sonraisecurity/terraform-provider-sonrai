@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -36,7 +37,17 @@ type Client struct {
 	pollInterval time.Duration
 	// cache memoizes reads until the first write; see readCache.
 	cache *readCache
+	// wrote records that this client has sent a mutation; see HasWritten.
+	wrote atomic.Bool
 }
+
+// HasWritten reports whether this client has sent any mutation.
+//
+// Terraform plans a resource a second time while applying, in the same
+// provider process that is making the changes. A caller that needs to know
+// what the platform held before this run touched it can only trust what it
+// reads while this is still false.
+func (c *Client) HasWritten() bool { return c.wrote.Load() }
 
 // Config describes how to reach an organization's API.
 type Config struct {
@@ -108,7 +119,7 @@ type response struct {
 // queries and for mutations that are safe to repeat. A mutation that must not
 // run twice goes through ExecuteOnce.
 func (c *Client) Execute(ctx context.Context, query string, variables map[string]any, out any) error {
-	return c.execute(ctx, query, variables, out, true)
+	return c.execute(ctx, query, variables, out, true, !isReadOnly(query))
 }
 
 // ExecuteOnce runs one GraphQL document without retrying an attempt the server
@@ -120,14 +131,26 @@ func (c *Client) Execute(ctx context.Context, query string, variables map[string
 // surface the error. Only rate limiting (429) is retried: it means the request
 // was rejected before any work was done.
 func (c *Client) ExecuteOnce(ctx context.Context, query string, variables map[string]any, out any) error {
-	return c.execute(ctx, query, variables, out, false)
+	return c.execute(ctx, query, variables, out, false, !isReadOnly(query))
 }
 
-func (c *Client) execute(ctx context.Context, query string, variables map[string]any, out any, idempotent bool) error {
+// executeDryRun runs a mutation the caller has asked the platform not to
+// carry out.
+//
+// It is sent while planning, so it must not count as a write: HasWritten
+// would turn true before anything changed, and the read cache would be
+// switched off for the rest of the plan. The caller is responsible for the
+// document really being a dry run.
+func (c *Client) executeDryRun(ctx context.Context, query string, variables map[string]any, out any) error {
+	return c.execute(ctx, query, variables, out, true, false)
+}
+
+func (c *Client) execute(ctx context.Context, query string, variables map[string]any, out any, idempotent, writes bool) error {
 	// Before the write is sent, not after: a read racing it must not be able
 	// to cache what the platform held before the write landed.
-	if !isReadOnly(query) {
+	if writes {
 		c.cache.disable()
+		c.wrote.Store(true)
 	}
 
 	body, err := json.Marshal(request{Query: query, Variables: variables})

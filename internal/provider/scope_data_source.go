@@ -76,8 +76,9 @@ func (d *scopeDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 				},
 			},
 			"scope": schema.StringAttribute{
-				MarkdownDescription: "Canonical scope path. Pass this to a control resource's `scope`.",
-				Computed:            true,
+				MarkdownDescription: "Canonical scope path, for reference. Resources take `root_scope` and `resource_id` and " +
+					"resolve this themselves.",
+				Computed: true,
 			},
 			"name": schema.StringAttribute{
 				MarkdownDescription: "Display name of the account, project or subscription.",

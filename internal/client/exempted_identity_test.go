@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -130,5 +131,53 @@ func TestExemptedIdentityDeployedMatchesOnSSOFlag(t *testing.T) {
 	}
 	if !deployed {
 		t.Error("SSO lookup did not match the SSO row")
+	}
+}
+
+// TestUpdateExemptedIdentityAssertsEveryType: a type left out has to travel as
+// false. That is the whole difference from staging, which only ever adds.
+func TestUpdateExemptedIdentityAssertsEveryType(t *testing.T) {
+	var got capture
+	c := clientReturning(t, `{"data":{"UpdateExemptedIdentity":{"success":true}}}`, &got)
+
+	err := c.UpdateExemptedIdentity(context.Background(), "aws/r-abcd", "*e/BreakGlass", false,
+		[]string{ExemptServiceBlock})
+	if err != nil {
+		t.Fatalf("UpdateExemptedIdentity: %v", err)
+	}
+	if !strings.Contains(got.Query, "UpdateExemptedIdentity") {
+		t.Errorf("query did not call UpdateExemptedIdentity: %s", got.Query)
+	}
+	input, ok := got.Variables["input"].(map[string]any)
+	if !ok {
+		t.Fatalf("input = %#v", got.Variables["input"])
+	}
+	for _, name := range ExemptionTypes {
+		value, present := input[name]
+		if !present {
+			t.Errorf("%s was omitted", name)
+		}
+		if want := name == ExemptServiceBlock; value != want {
+			t.Errorf("%s = %v, want %v", name, value, want)
+		}
+	}
+	if _, present := input["action"]; present {
+		t.Error("action is not part of UpdateExemptedIdentityInput")
+	}
+}
+
+func TestUpdateExemptedIdentityRefusesAnEmptySet(t *testing.T) {
+	c := clientReturning(t, `{"data":{"UpdateExemptedIdentity":{"success":true}}}`, nil)
+	if err := c.UpdateExemptedIdentity(context.Background(), "aws/r-abcd", "*e/BreakGlass", false, nil); err == nil {
+		t.Error("an empty set would stage every type for removal; expected an error")
+	}
+}
+
+func TestUpdateExemptedIdentityReportsFailure(t *testing.T) {
+	c := clientReturning(t, `{"data":{"UpdateExemptedIdentity":{"success":false}}}`, nil)
+	err := c.UpdateExemptedIdentity(context.Background(), "aws/r-abcd", "*e/BreakGlass", false,
+		[]string{ExemptServiceBlock})
+	if err == nil {
+		t.Error("success:false should be an error")
 	}
 }

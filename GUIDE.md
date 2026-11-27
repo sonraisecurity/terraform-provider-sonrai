@@ -212,8 +212,8 @@ resource "sonrai_control_submission" "firewall" {
   root_scope = "aws/r-abcd"
 
   triggers = {
-    cloud9_prod = sonrai_account_disabled_service.cloud9_prod.id
-    iam_prod    = sonrai_account_protected_service.iam_prod.id
+    cloud9_prod = sonrai_account_disabled_service.cloud9_prod.revision
+    iam_prod    = sonrai_account_protected_service.iam_prod.revision
   }
 }
 
@@ -242,8 +242,15 @@ Apply with credentials for the deploy account:
 terraform apply
 ```
 
-List the controls in `triggers` so that changing any of them produces a new
-submission.
+List the `revision` of each control in `triggers`. Every resource that stages
+changes has one, and it changes whenever the resource stages something, so the
+submission runs again for a new control, a changed one and a removed one.
+
+It also covers drift. When something is changed outside Terraform and deployed,
+the next plan reverts it in place. Nothing in the configuration changed, so a
+trigger built from configured values would stay the same and the revert would
+be staged without being submitted. `revision` is unknown in any plan that
+changes its resource, which is what makes the submission run.
 
 This walkthrough assumes the firewall has not been deployed under the root
 scope before. A control that is already applied — from the console or another
@@ -281,8 +288,8 @@ outcome is the one you want:
 
 That second case is the dangerous one. The staged removals are real and
 nothing has submitted them, while Terraform's state now says the controls are
-gone. The next submission against that root scope deploys the lot — including
-one made from the console, or by a colleague, or by another configuration.
+gone. The next submission made with the same token against that root scope
+deploys the lot — including one made by another configuration.
 
 Removing controls is a configuration change, not a destroy. Delete them from
 the configuration, or empty the maps feeding them, and apply:
@@ -440,9 +447,13 @@ with `import` blocks. Each resource's import ID:
 |---|---|---|
 | `sonrai_account_disabled_service` | `control_key@root_scope@resource_id` | `cloud9@aws/r-abcd@123456789012` |
 | `sonrai_account_protected_service` | `control_key@root_scope@resource_id` | `iam@aws/r-abcd@123456789012` |
-| `sonrai_exempted_identity` | `identity@scope`, plus `@sso` for an SSO actor id | `*e/BreakGlass@aws/r-abcd` |
+| `sonrai_exempted_identity` | `identity@root_scope@resource_id`, plus `@sso` for an SSO actor id | `*e/BreakGlass@aws/r-abcd@r-abcd` |
 | `sonrai_region_control` | `region_id@root_scope@resource_id` | `ap-south-1@aws/r-abcd@123456789012` |
-| `sonrai_jit_configuration` | The scope | `aws/r-abcd/123456789012` |
+| `sonrai_jit_configuration` | `root_scope@resource_id` | `aws/r-abcd@123456789012` |
+| `sonrai_approvers` | `root_scope@resource_id` | `aws/r-abcd@123456789012` |
+| `sonrai_custom_control` | `cloud_type:control_key` | `aws:datadestruction` |
+| `sonrai_organization_policy` | The policy id | `a1b2c3d4-0000-4000-8000-000000000000` |
+| `sonrai_organization_policy_attachment` | `policy_id@root_scope@resource_id` | `a1b2c3d4-0000-4000-8000-000000000000@aws/r-abcd@ou-abcd-1a2b3c4d` |
 | `sonrai_control_submission` | The transaction id | `a1b2c3d4-0000-4000-8000-000000000000` |
 | `aws_cloudformation_stack` | The stack name | `SonraiCloudPermissionFirewall` |
 
@@ -450,7 +461,10 @@ with `import` blocks. Each resource's import ID:
 setting.
 
 **Import the stack and its submission together.** The stack's `SonraiId`
-output names the transaction it is running, as `<org>:<transaction id>`.
+output names the transaction it is running, as `<org>:<transaction id>`. That
+is the last transaction that produced a template, which is not always the most
+recent one: a submission that changes nothing deployable leaves the stack, and
+this output, as they were.
 Import that transaction as the submission. The imported submission takes on
 the configured `triggers` without submitting, and its `stack_template_location`
 gives the stack a known `template_url`. Without it, the first apply submits
@@ -497,7 +511,19 @@ import {
 import {
   for_each = var.jit_configurations
   to       = sonrai_jit_configuration.this[each.key]
-  id       = each.key
+  id       = "${var.root_scope}@${each.key}"
+}
+
+import {
+  for_each = var.approvers
+  to       = sonrai_approvers.this[each.key]
+  id       = "${var.root_scope}@${each.key}"
+}
+
+import {
+  for_each = var.custom_controls
+  to       = sonrai_custom_control.this[each.key]
+  id       = "${each.value.cloud_type}:${lower(replace(each.value.title, " ", ""))}"
 }
 ```
 
@@ -520,6 +546,11 @@ Things to know about imported resources:
   already enrolled there, or the next apply unenrols it.
 - **Protected services** read their exemptions from the platform. Declare the
   same ones, or the next apply changes them.
+- **Custom controls** are authoritative for their permission list. Write every
+  permission, or the next apply removes the rest and redeploys the control.
+- **Approvers** are authoritative for the approvers assigned at their scope.
+  List every one, or the next apply removes the rest. Nothing is recorded to
+  restore, so destroying one leaves the approval type as it is.
 
 ## Troubleshooting
 
@@ -561,24 +592,34 @@ without finding out which build it was expecting.
 
 ## Addressing
 
-Control resources take a `root_scope` and a `resource_id`. `resource_id` is the
-cloud-native id of the account to act on:
+Every resource that targets part of the cloud hierarchy takes a `root_scope` and
+a `resource_id`. `resource_id` is the cloud-native id of the target:
 
 | Target | Example |
 |---|---|
 | AWS account | `123456789012` |
 | GCP project | `my-project` |
 | Azure subscription | `00000000-0000-0000-0000-000000000000` |
+| AWS organizational unit | `ou-abcd-1a2b3c` |
+| AWS organization root | `r-abcd` |
 
 Give ids bare. `my-project` resolves the same as `projects|my-project`, and
 already-qualified ids are accepted unchanged.
 
-Organizational units, folders, management groups and roots are not accepted by
-control resources. To cover several accounts, list each one. `sonrai_scope`
-resolves containers as well, for reference.
+Which targets a resource accepts depends on what it manages:
+
+| Resource | Accepts |
+|---|---|
+| `sonrai_account_disabled_service`, `sonrai_account_protected_service`, `sonrai_region_control` | Accounts only. To cover several accounts, list each one. |
+| `sonrai_jit_configuration`, `sonrai_exempted_identity`, `sonrai_approvers`, `sonrai_entitlements`, `sonrai_organization_policy_attachment` | Accounts, organizational units and the root. |
+
+`sonrai_custom_control` belongs to the whole organization and takes neither.
+`sonrai_organization_policy` takes only the `root_scope` of the AWS
+organization it is written for; where it applies is set by its attachments.
+`sonrai_scope` resolves any of these ids to its path, for reference.
 
 The provider resolves the scope path on every operation, so moving an account
-between organizational units requires no configuration change.
+or organizational unit requires no configuration change.
 
 ## Identities: ARNs and patterns
 
@@ -597,13 +638,14 @@ patterns:
 including accounts added later.
 
 Use the smallest pattern that names the identity, even when the exemption is
-for one account. `scope` is what limits an exemption to an account. A full ARN
+for one account. `resource_id` is what limits an exemption to an account. A full ARN
 adds nothing but length, and is still repeated in every statement of every
 policy for that account:
 
 ```hcl
 resource "sonrai_exempted_identity" "deploy_robot" {
-  scope       = "aws/r-abcd/123456789012"
+  root_scope  = "aws/r-abcd"
+  resource_id = "123456789012"
   identity    = "*e/DeployRobot"
   exempt_from = ["service_protect"]
 }
@@ -632,7 +674,8 @@ protect. Use one exempted identity with a pattern:
 
 ```hcl
 resource "sonrai_exempted_identity" "iam_admin" {
-  scope       = "aws/r-abcd"
+  root_scope  = "aws/r-abcd"
+  resource_id = "r-abcd"
   identity    = "*e/CrossAccountIAMAdminRole"
   exempt_from = ["service_protect"]
 }
@@ -659,6 +702,7 @@ it to manage it.
 | `scope` | string | computed | Resolved scope path. |
 | `status` | string | computed | `Disabled`, `Protected`, `Unprotected` or `Non-Privileged`. |
 | `pending` | bool | computed | True while a staged change has not been deployed. |
+| `revision` | string | computed | Changes whenever this resource stages a change. Reference it in the submission's `triggers`. |
 
 Creating the resource stages the change; it takes effect once submitted and
 deployed. `status` reads `Disabled` from the moment it is staged.
@@ -685,6 +729,7 @@ protected is rejected rather than adopted; import it to manage it.
 | `scope` | string | computed | Resolved scope path. |
 | `status` | string | computed | `Protected`, `Disabled`, `Unprotected` or `Non-Privileged`. |
 | `pending` | bool | computed | True while a staged change has not been deployed. |
+| `revision` | string | computed | Changes whenever this resource stages a change. Reference it in the submission's `triggers`. |
 
 Exemptions are attributes of the protect, not resources of their own. They are
 removed when the control is unmanaged or switched to a disable.
@@ -715,11 +760,14 @@ adopted; import it to manage it. AWS only.
 
 | Attribute | Type | | |
 |---|---|---|---|
-| `scope` | string | required | Scope to define the exemption at. Forces replacement. |
+| `root_scope` | string | required | Cloud organization root scope. |
+| `resource_id` | string | required | Id of the root, an organizational unit or an account. Pointing it somewhere else forces replacement. |
+| `scope` | string | computed | Scope path `resource_id` resolved to. |
 | `identity` | string | required | Smallest pattern that names the identity, such as `*e/BreakGlass`, or SSO actor id when `sso`. Forces replacement. |
 | `sso` | bool | optional | Whether `identity` is an IAM Identity Center user. Defaults to false. Forces replacement. |
 | `exempt_from` | set(string) | required | `service_protect`, `service_block`, `quarantine`, `region_block`, `jit`, `tamper_protect`. |
 | `pending` | bool | computed | True while a staged change has not been deployed. |
+| `revision` | string | computed | Changes whenever this resource stages a change. Reference it in the submission's `triggers`. |
 
 This is not the per-control exemption on `sonrai_account_protected_service`.
 That one names identities exempt from a single control; this exempts an
@@ -731,14 +779,29 @@ entry covers every account (see
 
 ```hcl
 resource "sonrai_exempted_identity" "break_glass" {
-  scope       = "aws/r-abcd"
+  root_scope  = "aws/r-abcd"
+  resource_id = "r-abcd"
   identity    = "*e/BreakGlass"
   exempt_from = ["service_protect", "service_block"]
 }
 ```
 
+`resource_id` says where the exemption is defined. The root's own id, `r-abcd`
+above, exempts across the whole organization; an organizational unit or account
+id limits it to that and everything beneath. The id is resolved to its path on
+every run, so an account or organizational unit that is moved needs no change
+here.
+
 The platform holds one entry per identity at a scope, so `exempt_from` carries
-every kind at once; kinds left out are turned off. Scopes are exact: an
+every kind at once.
+
+`exempt_from` is the complete list. Changing it on an existing exemption stages
+the difference from what is deployed, so a kind taken out of the list is removed
+when the change is submitted and deployed, and the identity stays exempt from
+the rest throughout. A kind added outside Terraform shows up as drift and is
+removed the same way unless it is added to `exempt_from`.
+
+Scopes are exact: an
 exemption defined at a root scope is in force in every account under it but
 belongs to the root, and is not readable as an entry at the account.
 
@@ -756,10 +819,13 @@ Configures Just-in-Time access at a scope. AWS only.
 
 | Attribute | Type | | |
 |---|---|---|---|
-| `scope` | string | required | Scope to configure. Forces replacement. |
+| `root_scope` | string | required | Cloud organization root scope. |
+| `resource_id` | string | required | Id of an account, organizational unit or the root. |
+| `scope` | string | computed | Scope path `resource_id` resolved to. |
 | `deny_first` | bool | optional | Deny every entitlement not enrolled here. Defaults to false. |
 | `enrolled_entitlements` | set(object) | optional | `name`, `type`, `auto_pod`. |
 | `pending` | bool | computed | True while a staged change has not been deployed. |
+| `revision` | string | computed | Changes whenever this resource stages a change. Reference it in the submission's `triggers`. |
 
 Declaring this resource replaces whatever the scope already has: enrolments
 absent from `enrolled_entitlements` are unenrolled, and `deny_first` takes the
@@ -774,8 +840,9 @@ request.
 
 ```hcl
 resource "sonrai_jit_configuration" "org" {
-  scope      = "aws/r-abcd"
-  deny_first = true
+  root_scope  = "aws/r-abcd"
+  resource_id = "r-abcd"
+  deny_first  = true
 
   enrolled_entitlements = [
     { name = "PowerUserAccess" },
@@ -783,6 +850,12 @@ resource "sonrai_jit_configuration" "org" {
   ]
 }
 ```
+
+`resource_id` is the id of an account, an organizational unit or the root
+itself, and the configuration covers everything beneath it. The id is resolved
+to its path on every run, reported as `scope`, so an account or organizational
+unit that is moved needs no change here. Pointing `resource_id` somewhere else
+replaces the resource.
 
 The platform replaces the whole configuration at a scope in one call, so this
 resource is authoritative for the scope it names. An entitlement enrolled from
@@ -813,6 +886,7 @@ Enables or disables one cloud region in one account. AWS only.
 | `scope` | string | computed | Canonical scope path the account resolved to. |
 | `status` | string | computed | `ENABLED` or `DISABLED`. |
 | `pending` | bool | computed | True while a staged change has not been deployed. |
+| `revision` | string | computed | Changes whenever this resource stages a change. Reference it in the submission's `triggers`. |
 | `critical` | bool | computed | Whether the platform treats the region as critical. |
 | `region_name` | string | computed | Human-readable name. |
 
@@ -875,12 +949,31 @@ deployable leaves the stack as it is. The platform's pre-signed download URL is
 deliberately not exposed, here or on `sonrai_control_transaction`: it is a
 short-lived credential and would sit in state.
 
-Reference the controls it covers in `triggers` so that changing any of them
-produces a new submission.
+Reference the `revision` of each control it covers in `triggers`, so that
+anything one of them stages produces a new submission. That includes a plan
+that only reverts a change made outside Terraform.
 
 Use one submission per root scope, and do not run concurrent applies against the
-same root scope. A submission covers every change staged under it, including
-changes staged from the console.
+same root scope. A submission covers every change the token's identity has
+staged under it, whether or not this configuration staged it, along with
+changes the platform has queued for the whole organization, such as denies for
+newly discovered third parties. Changes another user staged are left for that
+user to submit, so give each configuration its own App identity.
+
+A plan that creates or replaces the submission checks what is already pending
+under the root scope and warns when it finds anything, naming up to twenty of
+the changes. Nothing in the configuration has staged yet at that point, so
+these came from somewhere else: an earlier apply that did not finish, another
+configuration or a console session using the same identity, or the platform.
+The submission deploys them with everything the plan shows. Clear the ones that
+should not go out, in Pending Changes in the console, before applying. The
+warning cannot see anything staged between the plan and the apply.
+
+A submission that finds nothing staged starts no deployment. That happens when
+`triggers` change without any resource staging anything, such as a trigger
+being renamed. The resource records the most recent transaction already
+deployed, the apply warns that nothing was submitted, and the stack is left as
+it is.
 
 Waiting ends when the transaction reaches a terminal status or produces a
 template, whichever comes first. Use `sonrai_control_transaction` after
@@ -931,6 +1024,314 @@ Destroying the resource forgets the reset. It does not undo it, and nothing
 needs undoing — the controls it unapplied are staged, and submitting them
 deploys them again.
 
+### `sonrai_approvers`
+
+Sets who approves access requests at an account, organizational unit or root,
+and who is allowed to.
+
+| Attribute | Type | | |
+|---|---|---|---|
+| `root_scope` | string | required | Cloud organization root scope. Forces replacement. |
+| `resource_id` | string | required | Id of an account, organizational unit or the root. Forces replacement. |
+| `scope` | string | computed | Scope path `resource_id` resolved to. |
+| `approvers` | set(string) | required | Email addresses of users and groups, in lower case. May be empty. At most 100. |
+| `approval_type` | string | required | `exclude_self`, `assigned_approvers` or `everyone_at_scope`. |
+| `previous_approval_type` | string | computed | The approval type the scope had before this resource, which destroy restores. |
+
+```hcl
+resource "sonrai_approvers" "prod" {
+  root_scope    = "aws/r-abcd"
+  resource_id   = "123456789012"
+  approvers     = ["cloud-approvers@example.com", "amy@example.com"]
+  approval_type = "exclude_self"
+}
+```
+
+Unlike the control resources, `resource_id` also takes an organizational unit
+such as `ou-ab12-cdef3456` or the root itself, such as `r-abcd`. The id is
+resolved to its path on every run, so an account or organizational unit that is
+moved needs no change here.
+
+This is the one resource that does not stage. It takes effect when it is
+applied, it has no `revision`, and it does not belong in a submission's
+`triggers`.
+
+`approval_type` decides who may approve:
+
+- `exclude_self`: the assigned approvers, but never their own request.
+- `assigned_approvers`: the assigned approvers, their own requests included.
+- `everyone_at_scope`: anyone, their own requests included.
+
+The resource is authoritative for the approvers assigned at its scope. Any
+assigned there and left out of `approvers` are removed. Approvers a scope
+inherits from its parents are not listed and not affected, so an empty
+`approvers` leaves the scope to the ones it inherits. A scope that already has
+approvers of its own is rejected rather than adopted; import it.
+
+Approver exceptions, the conditional approver rules set on a scope in the
+console, are not managed here and are left as they are. The platform replaces a
+scope's exceptions with whatever a write sends, so every create, change and
+destroy reads them and sends them back unchanged. An apply warns if any are
+missing afterwards.
+
+Two things happen beyond the scope's own approver list:
+
+- **People can be invited and granted a role.** An address that is not yet a
+  Sonrai user is sent an invite, and an approver without an approver role is
+  granted `CloudPermissionFirewallApprover`. Removing the approver later undoes
+  neither.
+- **The approval type is copied down.** The platform also writes it to every
+  scope beneath this one that has no approvers of its own. A `sonrai_approvers`
+  on one of those scopes reports that as drift, so declare the same
+  `approval_type` there or give the scope approvers.
+
+Destroying the resource removes the scope's approvers and restores
+`previous_approval_type`. An imported resource has nothing recorded to restore,
+so destroying it leaves the approval type as it is.
+
+The token's identity needs the `edit.cloudcontrols` permission.
+
+### `sonrai_custom_control`
+
+Defines a custom control: a named group of permissions the firewall can protect
+or block, alongside the services it ships with. AWS and GCP.
+
+| Attribute | Type | | |
+|---|---|---|---|
+| `title` | string | required | Name of the control. A title that gives a different `control_key` forces replacement. |
+| `cloud_type` | string | required | `aws` or `gcp`. Forces replacement. |
+| `description` | string | required | What the control is for. |
+| `permissions` | set(string) | required | The complete list, such as `s3:DeleteBucket`. At most 1000. |
+| `control_key` | string | computed | Key to attach the control by. |
+| `revision` | string | computed | Changes when a deployed control needs redeploying. Reference it in the submission's `triggers`. |
+| `delete_timeout` | string | optional | How long destroy waits for a removal already being deployed. Defaults to `30m`. |
+
+```hcl
+resource "sonrai_custom_control" "data_destruction" {
+  title       = "Data Destruction"
+  cloud_type  = "aws"
+  description = "Deleting buckets, tables and snapshots"
+  permissions = ["s3:DeleteBucket", "dynamodb:DeleteTable", "ec2:DeleteSnapshot"]
+}
+
+resource "sonrai_account_protected_service" "data_destruction" {
+  root_scope  = "aws/r-abcd"
+  resource_id = "123456789012"
+  control_key = sonrai_custom_control.data_destruction.control_key
+}
+```
+
+A custom control belongs to the whole organization, not to a root scope, so it
+takes no `root_scope` or `resource_id`. Defining one is not staged: it exists
+as soon as it is applied. On its own it protects nothing. Attach it to an
+account by giving its `control_key` to `sonrai_account_protected_service` or
+`sonrai_account_disabled_service`, and that part is staged and submitted like
+any other control. Referring to `control_key` through the resource, rather than
+typing the key, is what makes Terraform define the control before attaching it.
+
+**The key comes from the title.** The platform lower-cases the title and
+removes its spaces, so `Data Destruction` becomes `datadestruction`. A control
+cannot be renamed: a title that gives a different key is a different control,
+and replaces this one. A change of case or spacing alone keeps the key and
+renames the control in place. A title that matches a built-in control is
+rejected.
+
+**The plan checks the definition.** Every permission has to exist for
+`cloud_type`, and the plan fails naming any that do not, before anything is
+changed. Case is not significant in a permission; the spelling in the
+configuration is kept. For GCP, use the `service.googleapis.com/resource.verb`
+form.
+
+**An existing control is not adopted.** A name already taken, by a control made
+in the console or by another configuration, is rejected with the command to
+import it. `sonrai_custom_controls` lists what exists.
+
+**Editing one that is not attached** takes effect at once and needs nothing
+deployed.
+
+**Editing the permissions of one that is deployed needs a redeploy.** The
+definition changes at once, but every account it is deployed in keeps enforcing
+the old list until its root scope is submitted and deployed again. `revision`
+moves when that is needed, so with it in the submission's `triggers` the same
+apply redeploys:
+
+```hcl
+resource "sonrai_control_submission" "firewall" {
+  root_scope = "aws/r-abcd"
+  triggers = {
+    protect = sonrai_account_protected_service.data_destruction.revision
+    control = sonrai_custom_control.data_destruction.revision
+  }
+}
+```
+
+The apply warns with every root scope that needs it. A control is shared by the
+organization, so that can include root scopes this configuration does not
+submit; the change waits in their Pending Changes until someone deploys it. If
+an apply stops after the edit and before the submission, `revision` keeps
+moving on each refresh until the redeploy has happened, so the next apply
+submits it. The same applies when the control was first deployed between the
+plan and the apply: the warning then says to apply again. Editing only the
+description needs no redeploy.
+
+**Destroying one that is attached takes two applies.** The platform will not
+delete a control that is still deployed, and detaching one only takes effect
+once that change is submitted and deployed. A plan that would destroy a
+deployed control is rejected, naming where it is deployed, before anything is
+changed:
+
+1. Remove the control from every account that uses it, keeping this resource,
+   and apply. The detach is submitted and deployed.
+2. Remove this resource and apply again.
+
+The two cannot share an apply. Terraform will not start the submission that
+deploys the detach until the control has been destroyed, and the control cannot
+be destroyed until that submission has finished. Where the control is deployed
+by another configuration, or was attached in the console, it has to be detached
+there. Attachments that were staged and never deployed do not stop a destroy,
+and are discarded with the control.
+
+The token's identity needs permission to edit cloud controls.
+
+### `sonrai_organization_policy`
+
+Defines an organization policy: a service control policy or resource control
+policy of your own that the firewall deploys alongside its own. AWS only.
+
+| Attribute | Type | | |
+|---|---|---|---|
+| `root_scope` | string | required | Root scope of the AWS organization. Forces replacement. |
+| `name` | string | required | Can be changed in place. Cannot start with `Sonrai`. |
+| `policy_type` | string | required | `SERVICE_CONTROL_POLICY` or `RESOURCE_CONTROL_POLICY`. Forces replacement. |
+| `content` | string | required | The whole policy document, as JSON. |
+| `description` | string | optional | Can be changed, but not removed once set. |
+| `id` | string | computed | Id to attach and import the policy by. |
+| `revision` | string | computed | Changes when a deployed policy needs redeploying. Reference it in the submission's `triggers`. |
+
+```hcl
+resource "sonrai_organization_policy" "deny_leaving_org" {
+  root_scope  = "aws/r-abcd"
+  name        = "deny-leaving-organization"
+  policy_type = "SERVICE_CONTROL_POLICY"
+  description = "Accounts cannot remove themselves from the organization"
+
+  content = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Deny"
+      Action   = ["organizations:LeaveOrganization"]
+      Resource = "*"
+    }]
+  })
+}
+```
+
+Sonrai does not create a separate policy in AWS. When the policy is deployed
+its statements are packed into the policies Sonrai already manages at each
+scope, so it uses none of the scope's policy attachment slots.
+
+Defining a policy is not staged: it exists in Sonrai as soon as it is applied,
+and on its own it is in force nowhere. Attach it with
+`sonrai_organization_policy_attachment`, and that part is staged and submitted
+like any other control.
+
+**The plan checks the document.** The platform reviews it during the plan, and
+the plan fails with what it finds: an action that does not exist, a statement
+with no `Effect`, a resource control policy with no `Principal`, a document
+over the size limit for its type. Write `content` with `jsonencode` or
+`data.aws_iam_policy_document`; formatting and key order are not significant.
+
+**An existing policy is not adopted.** The platform does not keep policy names
+unique, so the provider checks instead: a name a managed policy already has is
+rejected with the command to import it. `sonrai_organization_policies` lists
+what exists. Only a policy written in Sonrai can be imported. One that Sonrai
+discovered in AWS is listed by the data source and cannot be managed here.
+
+**Editing one that is not attached** takes effect at once and needs nothing
+deployed. That includes its name: the policy is identified by its id, so a
+rename is an edit, not a replacement.
+
+**Editing one that is deployed needs a redeploy.** The definition changes at
+once, but everywhere it is deployed keeps enforcing the old document until its
+root scope is submitted and deployed again. `revision` moves when that is
+needed, so with it in the submission's `triggers` the same apply redeploys:
+
+```hcl
+resource "sonrai_control_submission" "firewall" {
+  root_scope = "aws/r-abcd"
+  triggers = {
+    attachment = sonrai_organization_policy_attachment.workloads.revision
+    policy     = sonrai_organization_policy.deny_leaving_org.revision
+  }
+}
+```
+
+The apply warns with every root scope that needs it. A policy can be attached
+in more than one AWS organization, so that can include root scopes this
+configuration does not submit; the change waits in their Pending Changes until
+someone deploys it. If an apply stops after the edit and before the
+submission, `revision` keeps moving on each refresh until the edit is
+deployed, so the next apply submits it. The same applies when the policy was
+first deployed between the plan and the apply: the warning then says to apply
+again. Until it is deployed, an edit can be
+reverted from Pending Changes in the console; the next plan reports that as
+drift and puts the edit back.
+
+**Removing one that is attached takes two applies.** The platform will not
+delete a policy that is still deployed, and detaching one only takes effect
+once that change is submitted and deployed. So:
+
+1. Remove its `sonrai_organization_policy_attachment` resources, keep the
+   policy, and apply. The submission deploys the detachment.
+2. Remove the policy and apply again.
+
+A plan that would destroy a deployed policy in one step is rejected, naming
+the scopes it is deployed at, before anything is changed. The same goes for a
+change that replaces it, such as a new `policy_type`, and for a
+`terraform destroy` of the whole configuration. An attachment made in the
+console or by another configuration has to be detached there first.
+Attachments that were staged and never deployed are discarded with the policy.
+
+The token's identity needs the `edit.cloudcontrols` permission. Changing a
+policy changes it everywhere it is attached, so an identity restricted to part
+of the organization can only edit or remove a policy whose attachments all
+fall inside what it holds.
+
+### `sonrai_organization_policy_attachment`
+
+Attaches an organization policy to an account, organizational unit or the
+root of an AWS organization.
+
+| Attribute | Type | | |
+|---|---|---|---|
+| `policy_id` | string | required | The `id` of a `sonrai_organization_policy`. Forces replacement. |
+| `root_scope` | string | required | Root scope of the AWS organization. Forces replacement. |
+| `resource_id` | string | required | Account, organizational unit or root id. Forces replacement. |
+| `scope` | string | computed | Scope path `resource_id` resolved to. |
+| `revision` | string | computed | Reference it in the submission's `triggers`. |
+
+```hcl
+resource "sonrai_organization_policy_attachment" "workloads" {
+  policy_id   = sonrai_organization_policy.deny_leaving_org.id
+  root_scope  = "aws/r-abcd"
+  resource_id = "ou-abcd-1a2b3c4d"
+}
+```
+
+The policy applies at the target and everything beneath it, including
+accounts added later. Attaching and detaching are staged: neither is in force
+until the root scope is submitted and deployed.
+
+**An existing attachment is not adopted.** A policy that already reaches the
+target is rejected with the command to import the attachment.
+
+**Attach at one level of a branch.** The platform records the policy at every
+scope beneath an attachment and does not say which one it was attached at. An
+attachment to an account whose organizational unit is also attached cannot be
+told apart from inheritance: it reads as present for as long as the unit's
+does, and creating it is rejected as already attached. The platform also
+refuses to detach at a scope the policy reaches only from above.
+
 ## Data sources
 
 ### `sonrai_scope`
@@ -977,7 +1378,9 @@ account access roles and SAML roles. AWS only.
 
 | Attribute | Type | | |
 |---|---|---|---|
-| `scope` | string | required | Scope to read entitlements at. |
+| `root_scope` | string | required | Cloud organization root scope. |
+| `resource_id` | string | required | Id of an account, organizational unit or the root to read entitlements at. |
+| `scope` | string | computed | Scope path `resource_id` resolved to. |
 | `type` | string | optional | Return only `AWS_PERMISSION_SET`, `AWS_ACCOUNT_ACCESS_ROLE` or `AWS_SAML_ROLE`. |
 | `names` | set(string) | computed | Just the names. |
 | `entitlements` | list(object) | computed | `name`, `type`, `labels`, `user_count`, `user_count_display`. |
@@ -988,12 +1391,14 @@ out of the console.
 
 ```hcl
 data "sonrai_entitlements" "account" {
-  scope = "aws/r-abcd/123456789012"
+  root_scope  = "aws/r-abcd"
+  resource_id = "123456789012"
 }
 
 resource "sonrai_jit_configuration" "account" {
-  scope      = "aws/r-abcd/123456789012"
-  deny_first = true
+  root_scope  = "aws/r-abcd"
+  resource_id = "123456789012"
+  deny_first  = true
 
   enrolled_entitlements = [
     for e in data.sonrai_entitlements.account.entitlements : {
@@ -1010,7 +1415,7 @@ null where no count applies, as it does not for a SAML role assigned in the
 identity provider — null is not zero, and `user_count_display` renders it as
 `N/A`.
 
-`scope` matches the scope and everything beneath it. An entitlement that
+Entitlements are read for what `resource_id` names and everything beneath it. An entitlement that
 qualifies as more than one type is reported as the more specific one, account
 access role ahead of SAML role.
 
@@ -1045,3 +1450,102 @@ Reads a transaction, optionally waiting for a terminal status.
 | `template_location` | string | computed | |
 
 Reaching a terminal status other than `wait_for` is an error.
+
+### `sonrai_custom_controls`
+
+Lists the custom controls defined in the organization.
+
+| Attribute | Type | | |
+|---|---|---|---|
+| `root_scope` | string | required | Selects the cloud, and the root scope `deployed_scopes` reports on. |
+| `control_keys` | set(string) | computed | Just the keys. |
+| `controls` | list(object) | computed | `control_key`, `title`, `description`, `cloud_type`, `permissions`, `deployed_scopes`, `deployed_resource_ids`. |
+
+```hcl
+data "sonrai_custom_controls" "all" {
+  root_scope = "aws/r-abcd"
+}
+
+output "custom_controls_in_use" {
+  value = {
+    for c in data.sonrai_custom_controls.all.controls : c.control_key => c.deployed_scopes
+    if length(c.deployed_scopes) > 0
+  }
+}
+```
+
+Custom controls belong to the whole organization, so the list includes ones
+made in the console and by other configurations. `deployed_scopes` is where a
+control is deployed under `root_scope`; a control staged at a scope and not yet
+deployed is not listed. Use it to see what exists before defining a control,
+and to find what still has to be detached before destroying one.
+`deployed_resource_ids` holds the same places as cloud-native ids, in the same
+order, ready to give a resource as `resource_id`.
+
+### `sonrai_organization_policies`
+
+Lists the organization policies Sonrai knows of in an AWS organization.
+
+| Attribute | Type | | |
+|---|---|---|---|
+| `root_scope` | string | required | Root scope of the AWS organization. |
+| `policies` | list(object) | computed | `id`, `name`, `description`, `policy_type`, `content`, `authored`, `managed`, `attached_scopes`, `attached_resource_ids`. |
+
+```hcl
+data "sonrai_organization_policies" "all" {
+  root_scope = "aws/r-abcd"
+}
+
+output "managed_policies" {
+  value = {
+    for p in data.sonrai_organization_policies.all.policies : p.name => p.attached_scopes
+    if p.managed
+  }
+}
+```
+
+The list covers the policies written in Sonrai and the service control and
+resource control policies it discovered in AWS. `authored` is true for one
+written in Sonrai, and only those can be imported into
+`sonrai_organization_policy`. `managed` is true when Sonrai deploys the
+policy; one that is not managed is still attached by AWS itself, and
+`attached_scopes` reports where. An attachment that is staged and not yet
+deployed is not listed. `attached_resource_ids` holds the same places as
+cloud-native ids, in the same order, ready to give
+`sonrai_organization_policy_attachment` as `resource_id`.
+
+### `sonrai_pending_changes`
+
+Lists what a submission under a root scope would deploy if it ran now.
+
+| Attribute | Type | | |
+|---|---|---|---|
+| `root_scope` | string | required | |
+| `total` | number | computed | Number of pending changes. |
+| `changes` | list(object) | computed | `id`, `change_type`, `name`, `action`, `scope`, `resource_id`, `control_key`, `staged_by`, `identities`, `organization_wide`. |
+
+```hcl
+data "sonrai_pending_changes" "firewall" {
+  root_scope = "aws/r-abcd"
+}
+
+check "nothing_unexpected_is_pending" {
+  assert {
+    condition     = data.sonrai_pending_changes.firewall.total == 0
+    error_message = "${data.sonrai_pending_changes.firewall.total} change(s) are already pending."
+  }
+}
+```
+
+`organization_wide` is true for changes the platform queued for every
+submitter: updates to known third party accounts, and edits to custom controls
+and organization policies that are already deployed. The platform reports those
+under the caller, so `staged_by` does not tell them apart.
+
+It is read while planning, so it lists what was pending before this
+configuration staged anything. Do not give it a `depends_on` on the controls:
+that defers the read until they have staged, and it lists them too.
+
+Prefer a `check` block to a `precondition` on the submission. A precondition
+that requires nothing to be pending also blocks the apply that recovers from
+one which staged its changes and then failed before submitting them.

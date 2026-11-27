@@ -61,6 +61,7 @@ Organizational units, folders, management groups and roots are not accepted. Lis
 
 - `id` (String) Identifier of the form `control_key@root_scope@resource_id`.
 - `pending` (Boolean) True while this control has a staged change that has not been submitted and deployed.
+- `revision` (String) Opaque value that changes every time this resource stages a change. Reference it in the `triggers` of the `sonrai_control_submission` for its root scope, so that anything this resource stages is submitted, including a plan that only reverts a change made outside Terraform.
 - `scope` (String) Canonical scope path this resolved to, recomputed on every read.
 - `status` (String) Control status reported by the platform: `Disabled`, `Protected`, `Unprotected` or `Non-Privileged`. Reads `Disabled` from the moment a block is staged.
 

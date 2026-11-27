@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	tfpath "github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
@@ -359,4 +361,106 @@ func difference(a, b []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// revisionAttribute is the value a sonrai_control_submission's triggers should
+// reference on every resource that stages changes.
+//
+// It deliberately carries no UseStateForUnknown. The framework marks a computed
+// attribute unknown in any plan that changes the resource, and that unknown is
+// what makes the submission replace itself -- including when the plan only
+// reverts drift, where every configured value is the same as last time and a
+// trigger built from configuration would not move.
+func revisionAttribute() schema.StringAttribute {
+	return schema.StringAttribute{
+		MarkdownDescription: "Opaque value that changes every time this resource stages a change. " +
+			"Reference it in the `triggers` of the `sonrai_control_submission` for its root scope, " +
+			"so that anything this resource stages is submitted, including a plan that only " +
+			"reverts a change made outside Terraform.",
+		Computed: true,
+	}
+}
+
+func newRevision() types.String { return types.StringValue(rand.Text()) }
+
+// ensureRevision gives a resource that has never staged through this provider
+// version a revision: one that was imported, or whose state predates the
+// attribute. A known revision is left alone, because a refresh that moved it
+// would submit on every plan.
+func ensureRevision(revision *types.String) {
+	if revision.IsNull() || revision.IsUnknown() || revision.ValueString() == "" {
+		*revision = newRevision()
+	}
+}
+
+// scopeByID resolves root_scope and resource_id to a scope path. Unlike
+// resolveAccountScope it accepts organizational units and roots, for the
+// resources that are legitimately set on them.
+func scopeByID(ctx context.Context, api *client.Client, rootScope, resourceID types.String) (string, error) {
+	entry, err := api.ResolveScope(ctx, rootScope.ValueString(), resourceID.ValueString(), "")
+	if err != nil {
+		return "", err
+	}
+	return entry.Scope, nil
+}
+
+func diagnoseScopeByID(rootScope, resourceID types.String, err error) diag.Diagnostics {
+	if isNotFound(err) {
+		var diags diag.Diagnostics
+		diags.AddAttributeError(tfpath.Root("resource_id"), "Not found in the cloud hierarchy",
+			fmt.Sprintf("Nothing with id %q exists under %s. Give the id of an account, organizational "+
+				"unit or the root, without its path.", resourceID.ValueString(), rootScope.ValueString()))
+		return diags
+	}
+	return diagnoseAPIError("Unable to resolve scope", err)
+}
+
+// scopeResourceID returns the cloud-native id a scope path ends in, which is
+// what resources take as resource_id. It is the id as the hierarchy stores it,
+// so a GCP project comes back qualified ("projects|my-project"); resources
+// accept that form as well as the bare one.
+func scopeResourceID(scope string) string {
+	slash := strings.LastIndex(scope, "/")
+	if slash < 0 {
+		return ""
+	}
+	return scope[slash+1:]
+}
+
+func scopeResourceIDs(scopes []string) []string {
+	ids := make([]string, 0, len(scopes))
+	for _, scope := range scopes {
+		ids = append(ids, scopeResourceID(scope))
+	}
+	return ids
+}
+
+// revisionAfterEdit returns the revision to record after an edit, and whether
+// a submission triggered by it runs in this apply.
+//
+// A revision the plan pinned is kept even when the edit turns out to need a
+// redeploy, which happens when the thing was deployed between the plan and the
+// apply. Terraform fails an apply that returns a value other than the planned
+// one, and the submission was planned against the old value regardless. The
+// next refresh sees the outstanding redeploy and moves the revision then.
+func revisionAfterEdit(planned, prior types.String, needsDeploy bool) (types.String, bool) {
+	switch {
+	case !planned.IsUnknown():
+		return planned, false
+	case needsDeploy:
+		return newRevision(), true
+	default:
+		return prior, false
+	}
+}
+
+// redeployTiming says when an edit that needs a redeploy is submitted.
+func redeployTiming(submitsNow bool) string {
+	if submitsNow {
+		return "A sonrai_control_submission whose triggers reference this resource's revision does that in " +
+			"this apply."
+	}
+	return "This apply does not submit it: nothing was deployed when the plan was made, so the plan did " +
+		"not schedule a submission. Run terraform apply again; the next plan picks the change up and a " +
+		"sonrai_control_submission whose triggers reference this resource's revision submits it."
 }

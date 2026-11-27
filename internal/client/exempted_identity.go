@@ -35,6 +35,13 @@ mutation createStagedExemptedIdentity($input: CreateStagedExemptedIdentityInput)
   }
 }`
 
+const updateExemptedIdentityMutation = `
+mutation updateExemptedIdentity($input: UpdateExemptedIdentityInput) {
+  UpdateExemptedIdentity(input: $input) {
+    success
+  }
+}`
+
 const deleteStagedExemptedIdentityMutation = `
 mutation deleteStagedExemptedIdentity($input: DeleteStagedExemptedIdentityInput) {
   DeleteStagedExemptedIdentity(input: $input) {
@@ -137,8 +144,11 @@ func (c controlExemptions) anyPending() bool {
 	return false
 }
 
-// StageExemptedIdentity stages identity as exempt from exactly the given types
-// at scope. Types not listed are staged off.
+// StageExemptedIdentity stages a new exemption for identity at scope.
+//
+// It only ever adds: where an exemption is already deployed the platform
+// unions these types with the deployed set, so a type left out stays exempt.
+// Changing an existing exemption goes through UpdateExemptedIdentity.
 //
 // The platform allows one staged entry per identity, so every type travels in
 // a single call; staging a second time for the same identity is refused with
@@ -166,6 +176,41 @@ func (c *Client) StageExemptedIdentity(ctx context.Context, scope, identity stri
 	}
 	if !out.CreateStagedExemptedIdentity.Success {
 		return fmt.Errorf("CreateStagedExemptedIdentity reported failure for %s at %s", identity, scope)
+	}
+	return nil
+}
+
+// UpdateExemptedIdentity stages types as the complete set for an exemption
+// that already exists, deployed or only staged.
+//
+// Unlike StageExemptedIdentity it asserts every type, so one left out is
+// staged for removal. The platform diffs the set against what is deployed, and
+// a set equal to the deployed one withdraws the staged change altogether.
+//
+// Refused with FAILED_PRECONDITION while the exemption is in a transaction or
+// staged for removal, and with NOT_FOUND when it does not exist.
+func (c *Client) UpdateExemptedIdentity(ctx context.Context, scope, identity string, isSSO bool, types []string) error {
+	if err := ValidateExemptedIdentity(identity, isSSO); err != nil {
+		return err
+	}
+	if len(types) == 0 {
+		return fmt.Errorf("no exemption types given for %s at %s; remove the exemption instead", identity, scope)
+	}
+	input, err := exemptionInput(scope, identity, isSSO, types)
+	if err != nil {
+		return err
+	}
+
+	var out struct {
+		UpdateExemptedIdentity struct {
+			Success bool `json:"success"`
+		} `json:"UpdateExemptedIdentity"`
+	}
+	if err := c.ExecuteOnce(ctx, updateExemptedIdentityMutation, map[string]any{"input": input}, &out); err != nil {
+		return err
+	}
+	if !out.UpdateExemptedIdentity.Success {
+		return fmt.Errorf("UpdateExemptedIdentity reported failure for %s at %s", identity, scope)
 	}
 	return nil
 }

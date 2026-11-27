@@ -1,11 +1,11 @@
-# One submission per root scope. Reference the controls it covers in triggers so
-# that changing any of them produces a new submission.
+# One submission per root scope. Reference the revision of each control it
+# covers in triggers, so that anything one of them stages is submitted.
 resource "sonrai_control_submission" "firewall" {
   root_scope = "aws/r-abcd"
 
   triggers = {
-    sagemaker = sonrai_account_disabled_service.sagemaker_prod.id
-    textract  = sonrai_account_disabled_service.textract_prod.id
+    sagemaker = sonrai_account_disabled_service.sagemaker_prod.revision
+    textract  = sonrai_account_disabled_service.textract_prod.revision
   }
 }
 
