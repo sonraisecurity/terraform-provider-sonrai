@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -186,16 +185,16 @@ func TestPolicyDocumentProblem(t *testing.T) {
 // TestSameDocumentIgnoresFormatting: the platform stores the document
 // compacted, so a comparison of the text would show a change on every plan.
 func TestSameDocumentIgnoresFormatting(t *testing.T) {
-	written := jsontypes.NewNormalizedValue("{\n  \"Statement\": [ {\"Effect\": \"Deny\", \"Action\": \"s3:*\"} ],\n  \"Version\": \"2012-10-17\"\n}")
-	stored := jsontypes.NewNormalizedValue(`{"Version":"2012-10-17","Statement":[{"Action":"s3:*","Effect":"Deny"}]}`)
-	edited := jsontypes.NewNormalizedValue(`{"Version":"2012-10-17","Statement":[{"Action":"s3:Get*","Effect":"Deny"}]}`)
+	written := newPolicyDocument("{\n  \"Statement\": [ {\"Effect\": \"Deny\", \"Action\": \"s3:*\"} ],\n  \"Version\": \"2012-10-17\"\n}")
+	stored := newPolicyDocument(`{"Version":"2012-10-17","Statement":[{"Action":"s3:*","Effect":"Deny"}]}`)
+	edited := newPolicyDocument(`{"Version":"2012-10-17","Statement":[{"Action":"s3:Get*","Effect":"Deny"}]}`)
 	if !sameDocument(written, stored) {
 		t.Error("the same document in different formatting should compare equal")
 	}
 	if sameDocument(written, edited) {
 		t.Error("a different action should compare unequal")
 	}
-	if sameDocument(written, jsontypes.NewNormalizedNull()) {
+	if sameDocument(written, newPolicyDocumentNull()) {
 		t.Error("a document should not equal null")
 	}
 }
@@ -271,6 +270,26 @@ func TestAttachmentIDRoundTripsThroughImport(t *testing.T) {
 			context.Background(), resource.ImportStateRequest{ID: bad}, resp)
 		if !resp.Diagnostics.HasError() {
 			t.Errorf("import id %q should be refused", bad)
+		}
+	}
+}
+
+func TestSameJSON(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{`{"a":1,"b":[1,2]}`, "{ \"b\": [1, 2],\n \"a\": 1 }", true},
+		{`{"a":[1,2]}`, `{"a":[2,1]}`, false},
+		{`{"a":1}`, `{"a":1.0}`, false},
+		{`{"a":9007199254740993}`, `{"a":9007199254740992}`, false},
+		{`not json`, `not json`, true},
+		{`not json`, `{"a":1}`, false},
+		{`{"a":1} trailing`, `{"a":1}`, false},
+	}
+	for _, tc := range cases {
+		if got := sameJSON(tc.a, tc.b); got != tc.want {
+			t.Errorf("sameJSON(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
 		}
 	}
 }

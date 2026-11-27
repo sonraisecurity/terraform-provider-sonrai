@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -52,13 +51,13 @@ type organizationPolicyResource struct {
 func NewOrganizationPolicyResource() resource.Resource { return &organizationPolicyResource{} }
 
 type organizationPolicyModel struct {
-	ID          types.String         `tfsdk:"id"`
-	RootScope   types.String         `tfsdk:"root_scope"`
-	Name        types.String         `tfsdk:"name"`
-	PolicyType  types.String         `tfsdk:"policy_type"`
-	Description types.String         `tfsdk:"description"`
-	Content     jsontypes.Normalized `tfsdk:"content"`
-	Revision    types.String         `tfsdk:"revision"`
+	ID          types.String   `tfsdk:"id"`
+	RootScope   types.String   `tfsdk:"root_scope"`
+	Name        types.String   `tfsdk:"name"`
+	PolicyType  types.String   `tfsdk:"policy_type"`
+	Description types.String   `tfsdk:"description"`
+	Content     policyDocument `tfsdk:"content"`
+	Revision    types.String   `tfsdk:"revision"`
 }
 
 func (r *organizationPolicyResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -154,7 +153,7 @@ func (r *organizationPolicyResource) Schema(_ context.Context, _ resource.Schema
 					"Formatting and key order are not significant. The plan has the platform check it, " +
 					"and fails with what it finds.",
 				Required:   true,
-				CustomType: jsontypes.NormalizedType{},
+				CustomType: policyDocumentType{},
 				Validators: []validator.String{
 					stringvalidator.LengthBetween(2, maxPolicyDocumentBytes),
 					policyDocumentShape{},
@@ -325,7 +324,7 @@ func (r *organizationPolicyResource) ModifyPlan(ctx context.Context, req resourc
 	}
 }
 
-func sameDocument(a, b jsontypes.Normalized) bool {
+func sameDocument(a, b policyDocument) bool {
 	if a.IsNull() || a.IsUnknown() || b.IsNull() || b.IsUnknown() {
 		return a.Equal(b)
 	}
@@ -482,7 +481,7 @@ func (r *organizationPolicyResource) Read(ctx context.Context, req resource.Read
 
 	state.Name = types.StringValue(policy.Name)
 	state.PolicyType = types.StringValue(policy.Type)
-	state.Content = jsontypes.NewNormalizedValue(policy.Content)
+	state.Content = newPolicyDocument(policy.Content)
 	if policy.Description == "" {
 		state.Description = types.StringNull()
 	} else {
