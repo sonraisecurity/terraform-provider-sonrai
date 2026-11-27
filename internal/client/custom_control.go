@@ -109,9 +109,14 @@ func (c *Client) UpsertCustomControl(ctx context.Context, control CustomControl,
 			SyncRequired []CustomControlSync `json:"syncRequired"`
 		} `json:"UpsertCustomControl"`
 	}
-	// Not retried on an ambiguous failure: with CreateOnly, a retry after a
-	// lost success would be refused as a duplicate of the control it just made.
-	if err := c.ExecuteOnce(ctx, upsertCustomControlMutation, map[string]any{"input": input}, &out); err != nil {
+	// A real upsert is not retried on an ambiguous failure: with CreateOnly, a
+	// retry after a lost success would be refused as a duplicate of the
+	// control it just made.
+	send := c.ExecuteOnce
+	if opts.DryRun {
+		send = c.executeDryRun
+	}
+	if err := send(ctx, upsertCustomControlMutation, map[string]any{"input": input}, &out); err != nil {
 		return nil, err
 	}
 	result := out.UpsertCustomControl

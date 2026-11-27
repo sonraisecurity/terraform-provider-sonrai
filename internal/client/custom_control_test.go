@@ -272,3 +272,33 @@ func TestCustomControlsListsOnlyCustomOnes(t *testing.T) {
 		t.Error("azure has no custom controls")
 	}
 }
+
+// TestCustomControlDryRunIsNotAWrite: the dry run is sent while planning. If
+// it counted as a write, a plan that touched a custom control would lose the
+// pending-changes warning and the read cache along with it.
+func TestCustomControlDryRunIsNotAWrite(t *testing.T) {
+	var got capture
+	c := clientReturning(t, `{"data":{"UpsertCustomControl":{"success":true,"wasCreate":true,
+		"controlKey":"breakglass","syncRequired":[]}}}`, &got)
+	control := CustomControl{Title: "Break Glass", CloudType: "aws", Permissions: []string{"s3:DeleteBucket"}}
+
+	if _, err := c.UpsertCustomControl(context.Background(), control, UpsertCustomControlOptions{CreateOnly: true, DryRun: true}); err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	if c.HasWritten() {
+		t.Error("a dry run must not count as a write")
+	}
+	if !c.cache.enabled() {
+		t.Error("a dry run must leave the read cache on")
+	}
+
+	if _, err := c.UpsertCustomControl(context.Background(), control, UpsertCustomControlOptions{CreateOnly: true}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if !c.HasWritten() {
+		t.Error("a real upsert must count as a write")
+	}
+	if c.cache.enabled() {
+		t.Error("a real upsert must switch the read cache off")
+	}
+}
